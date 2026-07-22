@@ -37,6 +37,68 @@ flip, no build pipeline. Clone it, point it at your own Cloudflare account, and 
   the **Workers Paid** plan + a domain is **outgoing email** — and that's optional:
   the CMS runs in "no-email mode" without it (see [Email & no-email mode](#email--no-email-mode)).
 
+## Cloudflare CLI credentials
+
+`wrangler` (installed by `npm install`) needs to authenticate to your Cloudflare
+account. Two options:
+
+- **Interactive (simplest):** run `npx wrangler login` — it opens a browser to
+  authorise this machine. Nothing to store; good for local use.
+- **API token (for `.env`, CI, or non-interactive use):** copy `.env.example` to
+  `.env` and fill in two values:
+
+  **`CLOUDFLARE_API_TOKEN`** — create one at **Cloudflare dashboard → My Profile →
+  API Tokens → Create Token**. Start from the **“Edit Cloudflare Workers”** template,
+  then **add a `D1 → Edit`** permission (the template already covers Workers and R2
+  but not D1). Under *Account Resources*, select your account. The token is shown
+  **once** — copy it immediately. The permissions this project actually uses:
+
+  | Permission (Account) | Used for |
+  |---|---|
+  | Workers Scripts · Edit | `wrangler deploy` |
+  | D1 · Edit | create the database + apply `schema.sql` |
+  | Workers R2 Storage · Edit | create the media bucket |
+
+  (The Workers template + the added D1 permission cover all three.)
+
+  **`CLOUDFLARE_ACCOUNT_ID`** — in the dashboard go to **Workers & Pages** and copy
+  **Account ID** from the right-hand sidebar (it's also in the dashboard URL, and
+  `npx wrangler whoami` prints it once you're authenticated).
+
+`.env` is gitignored — never commit it.
+
+### Using your own names
+
+The starter uses the name `dragonslaircms` for the **Worker**, the **D1 database**
+and the **R2 bucket**. They're independent — rename any or all — but each name must
+be identical everywhere it's referenced:
+
+- **Worker name** — sets your `<your-worker>.<account-subdomain>.workers.dev` subdomain. One place:
+  `wrangler.jsonc` → top-level `"name"`.
+- **D1 database name** — **three** places that must match:
+  - `wrangler.jsonc` → `d1_databases[0].database_name`
+  - the `db:schema` **and** `db:schema:remote` scripts in `package.json`
+    (they call `wrangler d1 execute <name> …`)
+  - the `wrangler d1 create <name>` command you run at setup
+- **R2 bucket name** — **two** places that must match:
+  - `wrangler.jsonc` → `r2_buckets[0].bucket_name`
+  - the `wrangler r2 bucket create <name>` command you run at setup
+
+For example, to use `myblog` (database) and `myblog-media` (bucket), your setup
+commands become:
+
+```sh
+wrangler d1 create myblog                 # paste the printed id into database_id
+wrangler r2 bucket create myblog-media
+```
+
+…then set `database_name: "myblog"` and `bucket_name: "myblog-media"` in
+`wrangler.jsonc`, and change `dragonslaircms` → `myblog` in the two `db:schema*`
+scripts in `package.json`.
+
+Leave the **binding** names (`DB`, `MEDIA`, `EMAIL`, `ASSETS`) as they are — the code
+refers to those, not the resource names.
+
 ## Local development
 
 ```sh
@@ -55,6 +117,8 @@ first admin account (see below), then log in.
 
 ## Deploy to your own Cloudflare
 
+> Note: If you changed the d1 database name or r2 bucket name in `wrangler.jsonc`, you will need to adjust the commands below to use your set names.
+
 One-time setup on a fresh account:
 
 ```sh
@@ -69,8 +133,8 @@ wrangler r2 bucket create dragonslaircms
 #    - vars.SITE_URL         → your deployed origin (workers.dev subdomain or custom domain)
 #    - vars.SITE_EMAIL_FROM  → the address you'll verify for email (see Email)
 #    - vars.SITE_TITLE       → optional starting site name (also editable in admin later)
-#    (The worker `name`, D1 `database_name`, R2 `bucket_name` and the db:schema
-#     scripts in package.json all use "dragonslaircms" — if you rename one, rename all.)
+#    (Want your own project/database/bucket names instead of "dragonslaircms"?
+#     See "Using your own names" below — each name must be kept in sync.)
 
 # 4. Session secrets (32+ random chars each):
 wrangler secret put ADMIN_SESSION_SECRET
@@ -81,7 +145,7 @@ npm run db:schema:remote
 npm run deploy
 ```
 
-Then open `https://<your-worker>.workers.dev/admin` — with an empty database it
+Then open `https://<your-worker>.<account-subdomain>.workers.dev/admin` — with an empty database it
 redirects to **`/admin/setup`**, a one-time screen (shown only while there are no
 users) where you create the first admin account in the browser. Do this right after
 deploying, before sharing the URL.

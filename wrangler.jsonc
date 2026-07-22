@@ -1,0 +1,59 @@
+{
+	"name": "dragonslaircms",
+	"main": "src/index.js",
+	"compatibility_date": "2025-06-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// Static assets served from /public - CSS, JS, images
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "dragonslaircms",
+			// Paste the id printed by `wrangler d1 create dragonslaircms` here.
+			// (If you rename the database, also update database_name above and the
+			//  db:schema scripts in package.json so all three match.)
+			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "MEDIA",
+			"bucket_name": "dragonslaircms"
+		}
+	],
+	// Outgoing email uses Cloudflare's send_email binding, which needs the
+	// Workers Paid plan and a domain set up for Email Routing (a verified
+	// sender). On the Workers FREE plan, or if you don't want email, DELETE this
+	// whole "send_email" block: the CMS then runs in "no-email mode" — in-app
+	// notifications only, sign-up skips email verification, and admins set reader
+	// passwords from Admin > Readers. (You can also just switch it off later in
+	// Admin > Settings without removing the binding.)
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	// Site-level settings. SITE_TITLE and SITE_TAGLINE are just fallbacks — once
+	// you log in you can set the site name, tagline, logo, colours, nav and footer
+	// from Admin > Branding/Settings. SITE_URL must be your deployed origin (used
+	// to build absolute links in emails). SITE_EMAIL_FROM must be an address you
+	// have verified as an allowed sender in Cloudflare Email Routing (see below).
+	"vars": {
+		"SITE_TITLE": "My Site",
+		"SITE_TAGLINE": "",
+		"SITE_URL": "https://your-worker.your-subdomain.workers.dev",
+		"SITE_EMAIL_FROM": "My Site <you@example.com>"
+	}
+	// Secrets (set via: wrangler secret put SECRET_NAME):
+	//   ADMIN_SESSION_SECRET  - random 32+ char string for signing admin session cookies
+	//   READER_SESSION_SECRET - random 32+ char string for signing reader session cookies
+	//
+	// Email sending uses the Cloudflare Workers Email binding (EMAIL above).
+	// The SITE_EMAIL_FROM address must be added as an allowed sender in your Cloudflare
+	// dashboard under Email > Email Routing > Settings > Custom Addresses.
+}

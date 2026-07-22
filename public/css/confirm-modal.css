@@ -1,0 +1,17 @@
+/* Styled confirm/alert dialog (window.confirmModal — public/js/confirm-modal.js).
+   Buttons reuse the shared .btn / .btn-danger / .btn-secondary styles; only the
+   shell lives here. Uses the theme tokens so it follows light/dark mode. */
+
+.cfm-overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 200;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 18vh 1rem 1rem;
+}
+.cfm-box {
+  background: var(--color-bg); border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-md); width: 100%; max-width: 430px;
+  padding: 1.1rem 1.2rem; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.cfm-title { font-weight: 700; margin-bottom: 0.4rem; }
+.cfm-msg { margin: 0 0 1.1rem; color: var(--color-ink); line-height: 1.5; }
+.cfm-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }

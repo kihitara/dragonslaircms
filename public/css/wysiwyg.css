@@ -1,0 +1,235 @@
+/* DragonslairCMS WYSIWYG editor (public/js/wysiwyg.js) — layered on /theme.css
+   tokens like site.css/admin.css. Loaded only on admin editor pages. */
+
+.rt { border: 1px solid var(--color-surface-dark); border-radius: var(--radius-sm); background: var(--color-bg); min-width: 0; max-width: 100%; }
+
+/* Toolbar */
+.rt-bar {
+  display: flex; flex-wrap: wrap; gap: 0.2rem;
+  padding: 0.4rem;
+  border-bottom: 1px solid var(--color-surface-dark);
+  background: var(--color-surface);
+  position: sticky; top: 0; z-index: 5;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.rt-bar button {
+  background: var(--color-bg);
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  min-width: 30px; height: 30px; padding: 0 0.5rem;
+  font: inherit; font-size: 0.8rem; line-height: 1;
+  cursor: pointer; color: var(--color-ink);
+}
+.rt-bar button:hover { border-color: var(--color-brand); color: var(--color-brand); }
+.rt-bar button.rt-on { background: var(--color-brand-soft); border-color: var(--color-brand); color: var(--color-brand); }
+.rt-bar button.rt-ico { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.rt-bar button.rt-ico svg { width: 1.05rem; height: 1.05rem; display: block; }
+.rt-bar select { width: auto; height: 30px; padding: 0 0.4rem; font-size: 0.8rem; }
+.rt-sep { width: 1px; background: var(--color-surface-dark); margin: 0.15rem 0.25rem; }
+
+/* Editing surface — approximates the site's .prose so authors see what ships. */
+.rt-ed {
+  min-height: 320px; max-height: 65vh; overflow-y: auto;
+  padding: 0.7rem 0.9rem; outline: none;
+  font-family: var(--font-sans); color: var(--color-ink);
+  overflow-wrap: break-word; /* long URLs/words never widen the editor */
+}
+.rt-ed:focus { box-shadow: inset 0 0 0 2px var(--color-brand-soft); }
+.rt-ed h2 { font-family: var(--font-display); font-size: 1.5rem; margin: 0.6rem 0 0.3rem; }
+.rt-ed h3 { font-family: var(--font-display); font-size: 1.25rem; margin: 0.5rem 0 0.3rem; }
+.rt-ed h4 { font-family: var(--font-display); font-size: 1.05rem; margin: 0.4rem 0 0.25rem; }
+.rt-ed p { margin: 0.5rem 0; }
+/* Per-block text size (the toolbar's Small/Large select). Mirrors the public
+   .prose/.rich rt-sm/rt-lg rules in site.css. */
+.rt-ed p.rt-lg, .rt-ed li.rt-lg { font-size: 1.25em; line-height: 1.6; }
+.rt-ed p.rt-sm, .rt-ed li.rt-sm { font-size: 0.85em; line-height: 1.55; }
+.rt-ed ul { list-style: disc; margin: 0.5rem 0 0.5rem 1.4rem; padding: 0; }
+.rt-ed ol { list-style: decimal; margin: 0.5rem 0 0.5rem 1.4rem; padding: 0; }
+.rt-ed a { color: var(--color-brand); text-decoration: underline; }
+.rt-ed blockquote {
+  margin: 0.8rem 0; padding: 0.2em 0 0.2em 1.2em;
+  border-left: 3px solid var(--color-brand);
+  color: var(--color-muted); font-style: italic;
+}
+.rt-ed code { font-family: var(--font-mono); font-size: 0.9em; background: var(--color-surface); padding: 0.1em 0.35em; border-radius: var(--radius-sm); }
+.rt-ed pre { font-family: var(--font-mono); font-size: 0.85em; background: var(--color-surface); padding: 0.6rem 0.8rem; border-radius: var(--radius-sm); overflow-x: auto; }
+.rt-ed pre code { background: none; padding: 0; }
+.rt-ed hr { border: 0; border-top: 1px solid var(--color-surface-dark); margin: 1rem 0; }
+.rt-ed sup, .rt-ed sub { font-size: 0.72em; line-height: 1; }
+.rt-ed img { max-width: 100%; height: auto; border-radius: var(--radius-sm); cursor: pointer; }
+.rt-ed figure { margin: 0.6rem 0; }
+.rt-ed figcaption { font-size: 0.8rem; color: var(--color-muted); text-align: center; margin-top: 0.3rem; }
+
+/* HTML-source view (the original textarea, shown by the HTML toggle) */
+.rt textarea[data-richtext] {
+  border: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-family: var(--font-mono); font-size: 0.85rem;
+  min-height: 320px;
+}
+
+/* Inline dialog (link / image / paste-choice settings) */
+.rt-dlg { border-top: 1px solid var(--color-surface-dark); padding: 0.6rem; background: var(--color-surface); display: grid; gap: 0.4rem; }
+.rt-dlg-row { display: grid; grid-template-columns: 90px 1fr; gap: 0.5rem; align-items: center; font-size: 0.85rem; }
+.rt-dlg-hint { margin: 0; font-size: 0.82rem; color: var(--color-muted); line-height: 1.45; }
+.rt-dlg-actions { flex-wrap: wrap; }
+.rt-dlg-actions { display: flex; gap: 0.5rem; margin-top: 0.2rem; }
+.rt-dlg-ins { background: var(--color-brand); color: var(--color-bg); border: none; border-radius: var(--radius-sm); padding: 0.35rem 0.9rem; cursor: pointer; font: inherit; font-size: 0.85rem; font-weight: 600; }
+.rt-dlg-can { background: none; border: 1px solid var(--color-surface-dark); color: var(--color-ink); border-radius: var(--radius-sm); padding: 0.35rem 0.9rem; cursor: pointer; font: inherit; font-size: 0.85rem; }
+.rt-dlg-rem { background: none; border: 1px solid #E5A9A2; color: #99271C; border-radius: var(--radius-sm); padding: 0.35rem 0.9rem; cursor: pointer; font: inherit; font-size: 0.85rem; margin-left: auto; }
+.rt-dlg-rem:hover { background: #FDEBEA; }
+[data-theme="dark"] .rt-dlg-rem { border-color: #6E322B; color: #F2B8B1; }
+[data-theme="dark"] .rt-dlg-rem:hover { background: #3A1D1A; }
+
+/* Named anchor marker: an empty <a id class="rt-anchor"> is invisible on the
+   live site, so give it a visible chip in the editor — anchor glyph + the id —
+   that can be clicked to edit or remove. */
+.rt-ed a.rt-anchor {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  text-decoration: none;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  padding: 0 0.35rem 0 1.3rem;
+  margin: 0 0.12rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23808089'><path d='M11 3C11 2.44772 11.4477 2 12 2C12.5523 2 13 2.44772 13 3C13 3.55228 12.5523 4 12 4C11.4477 4 11 3.55228 11 3ZM13 5.82929C14.1652 5.41746 15 4.30622 15 3C15 1.34315 13.6569 0 12 0C10.3431 0 9 1.34315 9 3C9 4.30622 9.83481 5.41746 11 5.82929V8H8C7.44772 8 7 8.44772 7 9C7 9.55228 7.44772 10 8 10H11V20.9381C7.57272 20.5107 4.81871 17.9154 4.15356 14.5678L5.29289 15.7071C5.68342 16.0976 6.31658 16.0976 6.70711 15.7071C7.09763 15.3166 7.09763 14.6834 6.70711 14.2929L3.70711 11.2929C3.42111 11.0069 2.99099 10.9213 2.61732 11.0761C2.24364 11.2309 2 11.5955 2 12V13C2 18.5228 6.47715 23 12 23C17.5228 23 22 18.5228 22 13V12C22 11.5955 21.7564 11.2309 21.3827 11.0761C21.009 10.9213 20.5789 11.0069 20.2929 11.2929L17.2929 14.2929C16.9024 14.6834 16.9024 15.3166 17.2929 15.7071C17.6834 16.0976 18.3166 16.0976 18.7071 15.7071L19.8464 14.5678C19.1813 17.9154 16.4273 20.5107 13 20.9381V10H16C16.5523 10 17 9.55228 17 9C17 8.44772 16.5523 8 16 8H13V5.82929Z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: 0.28rem center;
+  background-size: 0.78rem 0.78rem;
+}
+.rt-ed a.rt-anchor::before { content: attr(id); }
+.rt-ed a.rt-anchor:hover { border-color: var(--color-brand); color: var(--color-brand); }
+
+/* Inline emoticons (img.rt-emoticon, inserted by the toolbar picker): render
+   at text height, inline with the copy — mirrors the public .prose/.rich rules
+   in site.css. The .rt-ed img border-radius is undone so square art stays square. */
+.rt-ed img.rt-emoticon {
+  height: 1.4em; width: auto;
+  display: inline-block;
+  vertical-align: -0.3em;
+  margin: 0 0.05em;
+  border-radius: 0;
+  cursor: pointer; /* click reopens the picker to replace it */
+}
+
+/* ── Callouts (doCallout) ───────────────────────────────────────────────────
+   The editor renders the exact stored markup (.rt-callout …), so these rules
+   mirror the public .prose/.rich callout block in site.css, rescoped to
+   .rt-ed. Accents are per-type custom properties with light defaults and dark
+   overrides under both [data-theme="dark"] and the OS-preference case —
+   duplicated from site.css because admin pages don't load it. */
+:root {
+  --co-success: #1F8A45;
+  --co-info: #1D6FD6;
+  --co-warning: #B07C0A;
+  --co-error: #C43B32;
+  --co-other: #6A6A74;
+}
+[data-theme="dark"] {
+  --co-success: #57C777;
+  --co-info: #6AA9F0;
+  --co-warning: #E3B341;
+  --co-error: #F08078;
+  --co-other: #9C9CA7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --co-success: #57C777;
+    --co-info: #6AA9F0;
+    --co-warning: #E3B341;
+    --co-error: #F08078;
+    --co-other: #9C9CA7;
+  }
+}
+
+.rt-ed .rt-callout {
+  --co-c: var(--co-other);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1.1rem;
+  margin: 0.8rem 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--co-c) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--co-c) 45%, transparent);
+  cursor: pointer; /* atomic (contenteditable=false); click reopens the dialog */
+}
+.rt-ed .rt-callout:hover { box-shadow: 0 0 0 2px var(--color-brand-soft); }
+.rt-ed .rt-callout-success { --co-c: var(--co-success); }
+.rt-ed .rt-callout-info    { --co-c: var(--co-info); }
+.rt-ed .rt-callout-warning { --co-c: var(--co-warning); }
+.rt-ed .rt-callout-error   { --co-c: var(--co-error); }
+.rt-ed .rt-callout-other   { --co-c: var(--co-other); }
+.rt-ed .rt-callout .rt-callout-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 1.3rem; height: 1.3rem;
+  margin-top: 0.2em;
+  color: var(--co-c);
+}
+.rt-ed .rt-callout .rt-callout-icon svg { width: 100%; height: 100%; display: block; }
+.rt-ed .rt-callout .rt-callout-icon img { width: 100%; height: 100%; object-fit: contain; display: block; margin: 0; }
+.rt-ed .rt-callout .rt-callout-body { flex: 1; min-width: 0; }
+.rt-ed .rt-callout .rt-callout-body > :first-child { margin-top: 0; }
+.rt-ed .rt-callout .rt-callout-body > :last-child { margin-bottom: 0; }
+.rt-ed .rt-callout .rt-callout-body h2,
+.rt-ed .rt-callout .rt-callout-body h3,
+.rt-ed .rt-callout .rt-callout-body h4 { color: var(--co-c); margin-top: 0.6em; margin-bottom: 0.25em; }
+
+/* Callout dialog: emoticon strip (Other) + mini rich-text body editor */
+.rt-co-emo { display: grid; gap: 0.4rem; }
+.rt-emo-btn.rt-emo-sel { border-color: var(--color-brand); background: var(--color-brand-soft); box-shadow: 0 0 0 1px var(--color-brand); }
+.rt-co-bar { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+.rt-co-bar button {
+  background: var(--color-bg);
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  min-width: 28px; height: 28px; padding: 0 0.45rem;
+  font: inherit; font-size: 0.78rem; line-height: 1;
+  cursor: pointer; color: var(--color-ink);
+}
+.rt-co-bar button:hover { border-color: var(--color-brand); color: var(--color-brand); }
+.rt-co-bar select { width: auto; height: 28px; padding: 0 0.4rem; font-size: 0.78rem; }
+.rt-co-mini {
+  min-height: 6em; max-height: 40vh; overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem; outline: none;
+  font-size: 0.92rem; overflow-wrap: break-word;
+}
+.rt-co-mini:focus { box-shadow: inset 0 0 0 2px var(--color-brand-soft); }
+.rt-co-mini p { margin: 0.4rem 0; }
+.rt-co-mini h3 { font-family: var(--font-display); font-size: 1.15rem; margin: 0.4rem 0 0.25rem; }
+.rt-co-mini h4 { font-family: var(--font-display); font-size: 1rem; margin: 0.35rem 0 0.2rem; }
+.rt-co-mini ul { list-style: disc; margin: 0.4rem 0 0.4rem 1.3rem; padding: 0; }
+.rt-co-mini ol { list-style: decimal; margin: 0.4rem 0 0.4rem 1.3rem; padding: 0; }
+.rt-dlg-ins:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Emoticon picker dialog (doEmoticon) — lives in the shared .rt-dlg shell */
+.rt-emo-bar { display: flex; gap: 0.5rem; }
+.rt-emo-bar input[type=text] { flex: 1; min-width: 0; font-size: 0.85rem; padding: 0.3rem 0.5rem; }
+.rt-emo-bar select { width: auto; font-size: 0.85rem; padding: 0.3rem 0.4rem; }
+.rt-emo-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; max-height: 200px; overflow-y: auto; }
+.rt-emo-grid:empty { display: none; }
+.rt-emo-btn {
+  width: 44px; height: 44px; padding: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--color-bg);
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.rt-emo-btn:hover { border-color: var(--color-brand); }
+.rt-emo-btn img { width: 100%; height: 100%; object-fit: contain; }
+
+/* Inline link row in the callout dialog (nested dialogs would close it). */
+.rt-co-linkrow { display: flex; gap: 0.4rem; align-items: center; margin: 0.4rem 0; }
+.rt-co-linkrow input { flex: 1; min-width: 0; }
+.rt-co-linkrow button[hidden] { display: none; }

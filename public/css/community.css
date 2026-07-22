@@ -1,0 +1,97 @@
+/* DragonslairCMS community styles — comments, corrections, reader pages.
+   Layered on site.css; colours come from /theme.css tokens like everything
+   else. Pulled in by the community fragments and /reader/* pages. */
+
+.community-block { max-width: 720px; margin-top: 2.5rem; }
+
+/* ── Forms (comments, replies, corrections) ─────────────────────────────── */
+
+.comment-form { margin-top: 1rem; }
+.comment-form textarea { min-height: 100px; }
+.comment-form h3 { margin-top: 1.5rem; }
+
+/* Inline emoticons inside rendered comment bodies. site.css scopes the
+   rt-emoticon rule to .prose/.rich (article bodies); comments render in
+   .comment-body, so mirror it here. */
+.comment-body img.rt-emoticon {
+  height: 1.4em; width: auto;
+  display: inline-block;
+  vertical-align: -0.3em;
+  margin: 0 0.05em;
+  border-radius: 0;
+}
+
+/* ── Collapsible widgets ────────────────────────────────────────────────── */
+
+.correction-widget, .reply-widget {
+  margin-top: 1.2rem;
+  border: 1px dashed var(--c-hairline, var(--color-surface-dark));
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.9rem;
+  font-size: 0.92rem;
+}
+.correction-widget summary, .reply-widget summary {
+  cursor: pointer;
+  color: var(--c-link, var(--color-brand));
+  font-weight: 600;
+}
+.reply-widget { margin-top: 0.8rem; border-style: solid; }
+
+/* ── Subscription nudge ─────────────────────────────────────────────────── */
+
+.subscription-nudge {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.8rem;
+  background: var(--c-panel, var(--color-surface));
+  border: 1px solid var(--c-panel-border, var(--color-surface-dark));
+  border-radius: var(--radius-md);
+  padding: 0.9rem 1.2rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+}
+.subscription-nudge form { margin: 0; }
+
+/* ── Reader account pages ───────────────────────────────────────────────── */
+
+.reader-card { max-width: 480px; }
+.reader-card h2 { font-size: 1.25rem; margin-top: 1.5rem; }
+
+.reader-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+.reader-head h1 { margin: 0; }
+.reader-head > div { display: flex; gap: 0.5rem; }
+
+.checkbox-field label { display: flex; gap: 0.5rem; align-items: baseline; font-weight: 400; font-size: 0.95rem; }
+.checkbox-field input[type="checkbox"] { width: auto; }
+
+.reader-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.reader-table th {
+  text-align: left; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--c-subtle, var(--color-muted));
+  padding: 0.5rem 0.7rem;
+  border-bottom: 2px solid var(--c-hairline, var(--color-surface-dark));
+}
+.reader-table td { padding: 0.65rem 0.7rem; border-bottom: 1px solid var(--c-hairline, var(--color-surface-dark)); vertical-align: top; }
+.reader-table .comment-excerpt { color: var(--c-subtle, var(--color-muted)); }
+.reader-table .own-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.reader-table .own-actions form { margin: 0; }
+
+/* Status pills on public reader pages (mirrors admin.css values). */
+.status-pill {
+  display: inline-block;
+  border-radius: var(--radius-pill);
+  padding: 0.1rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.status-pill.pending { background: #FCF3D7; color: #8A6D1B; }
+[data-theme="dark"] .status-pill.pending { background: #3A311A; color: #E8C96A; }
+.status-pill.approved { background: var(--color-accent-soft); color: var(--color-accent-dark); }
+.status-pill.rejected { background: #FDEBEA; color: #99271C; }
+[data-theme="dark"] .status-pill.rejected { background: #3A1D1A; color: #F2B8B1; }
+
+/* Admin moderation queue: reply rows nested under a comment card. */
+.mod-reply { padding: 0.5rem 0; border-bottom: 1px dashed var(--color-surface-dark); }
+.mod-reply:last-child { border-bottom: none; }
+
+/* Honeypot: off-screen bait field. Real users never see or fill it; naive
+   spam bots fill every field and get silently dropped server-side. */
+.hp-trap { position: absolute !important; left: -10000px !important; top: auto; width: 1px; height: 1px; overflow: hidden; }

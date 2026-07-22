@@ -1,0 +1,532 @@
+/* DragonslairCMS site styles — structure only. All colour comes from
+   /theme.css (design tokens) via --color-* and the surface roles --c-*. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.65;
+  background: var(--c-bg, var(--color-bg));
+  color: var(--c-text, var(--color-ink));
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+img, svg, video { max-width: 100%; height: auto; }
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-heading);
+  color: var(--c-heading, var(--color-ink));
+  line-height: 1.2;
+  margin: 0 0 0.5em;
+}
+h1 { font-size: 2.4rem; letter-spacing: -0.02em; }
+h2 { font-size: 1.8rem; letter-spacing: -0.01em; }
+h3 { font-size: 1.35rem; }
+h4 { font-size: 1.1rem; }
+
+a { color: var(--c-link, var(--color-brand)); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code, pre, kbd { font-family: var(--font-mono); font-size: 0.92em; }
+pre {
+  background: var(--c-panel, var(--color-surface));
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+hr { border: none; border-top: 1px solid var(--c-hairline, var(--color-surface-dark)); margin: 2rem 0; }
+
+::selection { background: var(--color-brand-soft); color: var(--color-brand-dark); }
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+
+.container {
+  width: 100%;
+  max-width: var(--size-container);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+main { flex: 1; }
+
+.section { padding: 3rem 0; }
+.section + .section { padding-top: 0; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.site-header {
+  border-bottom: 1px solid var(--c-hairline, var(--color-surface-dark));
+  background: var(--c-bg, var(--color-bg));
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.site-header .container {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  min-height: 64px;
+}
+.site-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-family: var(--font-display);
+  font-weight: var(--weight-heading);
+  font-size: 1.15rem;
+  color: var(--c-heading, var(--color-ink));
+}
+.site-logo:hover { text-decoration: none; }
+.site-logo img { width: 34px; height: 34px; border-radius: 8px; }
+
+.site-nav { display: flex; align-items: center; gap: 1.1rem; margin-left: auto; flex-wrap: wrap; }
+.site-nav a {
+  color: var(--c-text, var(--color-ink));
+  font-size: 0.95rem;
+  padding: 0.3rem 0.15rem;
+  border-bottom: 2px solid transparent;
+}
+.site-nav a:hover { text-decoration: none; color: var(--color-brand); }
+.site-nav a.active { border-bottom-color: var(--color-brand); color: var(--color-brand); }
+
+.site-account {
+  color: var(--c-text, var(--color-ink));
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.3rem 0.15rem;
+}
+.site-account:hover { text-decoration: none; color: var(--color-brand); }
+
+.theme-toggle {
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  background: transparent;
+  color: var(--c-text, var(--color-ink));
+  border-radius: var(--radius-pill);
+  width: 34px; height: 34px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 1rem;
+}
+.theme-toggle:hover { background: var(--c-panel, var(--color-surface)); }
+
+/* Nav dropdowns: a .nav-drop wraps the toggle + its .nav-drop-menu. Desktop
+   opens on hover/focus-within or a JS-set .open (touch); on mobile the menu
+   renders inline inside the hamburger panel. */
+.nav-drop { position: relative; display: inline-flex; align-items: center; }
+.nav-drop-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--c-text, var(--color-ink));
+  padding: 0.3rem 0.15rem;
+  border-bottom: 2px solid transparent;
+}
+.nav-drop-toggle:hover { text-decoration: none; color: var(--color-brand); }
+.nav-drop-toggle.active { border-bottom-color: var(--color-brand); color: var(--color-brand); }
+.nav-caret { font-size: 0.7em; transition: transform 0.15s; }
+.nav-drop:hover .nav-caret, .nav-drop.open .nav-caret, .nav-drop:focus-within .nav-caret { transform: rotate(180deg); }
+.nav-drop-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 180px;
+  background: var(--c-bg, var(--color-bg));
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+  padding: 0.4rem 0;
+  z-index: 60;
+}
+.nav-drop:hover .nav-drop-menu,
+.nav-drop:focus-within .nav-drop-menu,
+.nav-drop.open .nav-drop-menu { display: block; }
+.nav-drop-menu a {
+  display: block;
+  padding: 0.4rem 1rem;
+  font-size: 0.93rem;
+  color: var(--c-text, var(--color-ink));
+  border-bottom: none;
+  white-space: nowrap;
+}
+.nav-drop-menu a:hover { background: var(--c-panel, var(--color-surface)); color: var(--color-brand); text-decoration: none; }
+
+/* Mobile site menu: below 640px the header keeps only the icon + a hamburger;
+   the title, nav links, and theme toggle collapse into a dropdown panel. */
+.site-menu-toggle { display: none; }
+.site-nav-title { display: none; }
+@media (max-width: 640px) {
+  .site-logo .site-logo-text { display: none; }
+  .site-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    border: 1px solid var(--c-hairline, var(--color-surface-dark));
+    background: transparent;
+    color: var(--c-text, var(--color-ink));
+    border-radius: var(--radius-sm);
+    font-size: 1.15rem;
+    padding: 0.15rem 0.55rem;
+    cursor: pointer;
+  }
+  .site-nav { display: none; }
+  body.site-nav-open .site-nav {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--c-bg, var(--color-bg));
+    border-bottom: 1px solid var(--c-hairline, var(--color-surface-dark));
+    padding: 0.8rem 1.25rem 1.1rem;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+  }
+  body.site-nav-open .site-nav a { padding: 0.35rem 0; font-size: 1.02rem; border-bottom: none; }
+  /* Dropdowns inside the mobile panel collapse like the admin sidebar:
+     closed by default (caret rotates), tap to expand, children indented.
+     The parent holding the current page starts open (server-set .open). */
+  body.site-nav-open .nav-drop { display: block; width: 100%; }
+  body.site-nav-open .nav-drop-toggle { padding: 0.35rem 0; font-size: 1.02rem; }
+  body.site-nav-open .nav-drop:not(.open) .nav-drop-menu { display: none; }
+  body.site-nav-open .nav-drop.open .nav-drop-menu {
+    display: block;
+    position: static;
+    transform: none;
+    min-width: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    padding: 0 0 0.2rem 1rem;
+  }
+  body.site-nav-open .site-nav-title {
+    display: block;
+    font-family: var(--font-display);
+    font-weight: var(--weight-heading);
+    color: var(--c-heading, var(--color-ink));
+    font-size: 1.1rem;
+    margin-bottom: 0.2rem;
+  }
+  body.site-nav-open .site-nav .theme-toggle { margin-top: 0.5rem; }
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+
+.site-footer {
+  border-top: 1px solid var(--c-hairline, var(--color-surface-dark));
+  background: var(--c-panel, var(--color-surface));
+  padding: 2.5rem 0;
+  margin-top: 3rem;
+  font-size: 0.92rem;
+  color: var(--c-subtle, var(--color-muted));
+}
+.site-footer .footer-cols { display: flex; flex-wrap: wrap; gap: 2.5rem; justify-content: space-between; }
+.site-footer h4 { font-size: 0.95rem; margin-bottom: 0.6rem; }
+.site-footer ul { list-style: none; margin: 0; padding: 0; }
+.site-footer li { margin: 0.3rem 0; }
+.site-footer .footer-meta { margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--c-hairline, var(--color-surface-dark)); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
+
+/* ── Buttons & badges ───────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  background: var(--c-btn-bg, var(--color-brand));
+  color: var(--c-btn, var(--color-bg));
+  /* Transparent border on every variant so an outlined button (which sets a
+     visible border) is exactly the same height as a solid one — otherwise the
+     1.5px border makes outlined buttons 3px taller than their solid siblings. */
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 0.55rem 1.3rem;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(1.1); text-decoration: none; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:hover { filter: none; }
+.btn.btn-secondary {
+  background: transparent;
+  color: var(--c-link, var(--color-brand));
+  border-color: currentColor;
+}
+.btn.btn-green { background: var(--color-accent); color: var(--color-bg); }
+.btn.btn-small { padding: 0.3rem 0.9rem; font-size: 0.85rem; }
+.btn.btn-danger { background: #C0392B; color: #fff; }
+
+.badge {
+  display: inline-block;
+  background: var(--c-tab-bg, var(--color-brand-soft));
+  color: var(--c-tab, var(--color-brand-dark));
+  border-radius: var(--radius-pill);
+  padding: 0.12rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.badge.badge-green { background: var(--color-accent-soft); color: var(--color-accent-dark); }
+
+/* ── Cards / panels ─────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--c-panel, var(--color-surface));
+  border: 1px solid var(--c-panel-border, var(--color-surface-dark));
+  border-radius: var(--radius-md);
+  padding: 1.4rem;
+}
+.card h3 a { color: inherit; }
+
+.grid { display: grid; gap: 1.25rem; }
+.grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) {
+  .grid.cols-3, .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+  h1 { font-size: 1.9rem; }
+}
+
+/* ── Prose (article bodies, rich text) ──────────────────────────────────── */
+
+.prose { max-width: 720px; }
+.prose p { margin: 0 0 1.1em; }
+.prose img { border-radius: var(--radius-sm); }
+.prose blockquote {
+  margin: 1.5em 0;
+  padding: 0.2em 0 0.2em 1.2em;
+  border-left: 3px solid var(--color-brand);
+  color: var(--c-subtle, var(--color-muted));
+  font-style: italic;
+}
+.prose ul, .prose ol { padding-left: 1.4em; }
+.prose figure { margin: 1.5em 0; }
+.prose figcaption { font-size: 0.85rem; color: var(--c-subtle, var(--color-muted)); margin-top: 0.4rem; }
+
+/* ── Article listings ───────────────────────────────────────────────────── */
+
+.article-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+  font-size: 0.88rem;
+  color: var(--c-subtle, var(--color-muted));
+}
+.article-card .cover { border-radius: var(--radius-sm); aspect-ratio: 16/9; object-fit: cover; width: 100%; margin-bottom: 0.8rem; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.pagination { display: flex; gap: 0.5rem; justify-content: center; margin: 2.5rem 0 1rem; }
+.pagination a, .pagination span {
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  font-size: 0.9rem;
+}
+.pagination .current { background: var(--color-brand); color: var(--color-bg); border-color: var(--color-brand); }
+
+/* ── Forms ──────────────────────────────────────────────────────────────── */
+
+.field { margin-bottom: 1.1rem; }
+.field label { display: block; font-size: 0.88rem; font-weight: 600; margin-bottom: 0.35rem; }
+.field .hint { font-size: 0.8rem; color: var(--c-subtle, var(--color-muted)); margin-top: 0.3rem; }
+
+input[type="text"], input[type="email"], input[type="password"], input[type="url"],
+input[type="date"], input[type="number"], select, textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--c-text, var(--color-ink));
+  background: var(--c-bg, var(--color-bg));
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+}
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+  border-color: var(--color-brand);
+}
+textarea { min-height: 120px; resize: vertical; }
+
+/* Native file inputs: style the picker button to match .btn btn-secondary
+   btn-small (the same rounded outline as the media picker's Browse… button),
+   so "Choose file" on the media / emoticon / font / photo upload forms is
+   consistent with the rest of the UI. The "No file chosen" text beside it is
+   left to the browser. */
+input[type="file"] { font-size: 0.85rem; color: var(--c-subtle, var(--color-muted)); }
+input[type="file"]::file-selector-button {
+  margin-right: 0.7rem;
+  padding: 0.3rem 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--c-link, var(--color-brand));
+  background: transparent;
+  border: 1.5px solid currentColor;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+input[type="file"]:hover::file-selector-button { background: var(--color-brand-soft); }
+
+.notice {
+  border-radius: var(--radius-sm);
+  padding: 0.8rem 1.1rem;
+  margin-bottom: 1.2rem;
+  font-size: 0.92rem;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-dark);
+  border: 1px solid var(--color-brand-light);
+}
+.notice.notice-green { background: var(--color-accent-soft); color: var(--color-accent-dark); border-color: var(--color-accent-light); }
+.notice.notice-error { background: #FDEBEA; color: #99271C; border-color: #E5A9A2; }
+[data-theme="dark"] .notice.notice-error { background: #3A1D1A; color: #F2B8B1; border-color: #6E322B; }
+
+/* ── Comments ───────────────────────────────────────────────────────────── */
+
+.comments { max-width: 720px; margin-top: 3rem; }
+.comment {
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  border-radius: var(--radius-md);
+  padding: 1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+.comment .comment-head { display: flex; gap: 0.6rem; align-items: baseline; font-size: 0.88rem; margin-bottom: 0.4rem; }
+.comment .comment-author { font-weight: 700; color: var(--c-heading, var(--color-ink)); }
+.comment .comment-date { color: var(--c-subtle, var(--color-muted)); }
+.comment .comment-body { font-size: 0.97rem; }
+.comment .replies { margin-top: 0.9rem; padding-left: 1.1rem; border-left: 2px solid var(--c-hairline, var(--color-surface-dark)); }
+.comment.staff { border-color: var(--color-brand-light); background: var(--color-brand-soft); }
+
+/* ── Hero block ─────────────────────────────────────────────────────────── */
+
+.hero { padding: 4.5rem 0; }
+.hero .lede { font-size: 1.25rem; color: var(--c-subtle, var(--color-muted)); max-width: 640px; }
+.hero .cta-row { display: flex; gap: 0.8rem; margin-top: 1.6rem; flex-wrap: wrap; }
+
+/* ── Utility ────────────────────────────────────────────────────────────── */
+
+.muted { color: var(--c-subtle, var(--color-muted)); }
+.small { font-size: 0.88rem; }
+.center { text-align: center; }
+.flow > * + * { margin-top: 1rem; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ── WYSIWYG per-block text size (rt-sm / rt-lg) ────────────────────────────
+   Classes set by the editor's text-size control (public/js/wysiwyg.js) on
+   p/li blocks. Scoped to .prose (article bodies) and .rich (block rich text)
+   so sized text renders everywhere authored HTML does. em units compose with
+   scaled contexts like .rich-lg. */
+.prose p.rt-lg, .prose li.rt-lg,
+.rich p.rt-lg, .rich li.rt-lg { font-size: 1.25em; line-height: 1.6; }
+.prose p.rt-sm, .prose li.rt-sm,
+.rich p.rt-sm, .rich li.rt-sm { font-size: 0.85em; line-height: 1.55; }
+
+/* Inline emoticons (public/js/wysiwyg.js emoticon picker): small inline images
+   inserted into rich text as <img class="rt-emoticon" alt=":slug:">. They sit
+   in the line of text at text height — and skip the .prose img border-radius
+   so square emoticon art stays square. Scoped to .prose (article bodies) and
+   .rich (block rich text). */
+.prose img.rt-emoticon, .rich img.rt-emoticon {
+  height: 1.4em; width: auto;
+  display: inline-block;
+  vertical-align: -0.3em;
+  margin: 0 0.05em;
+  border-radius: 0;
+}
+
+/* ── Callouts (public/js/wysiwyg.js “Insert callout”) ───────────────────────
+   Authored markup, stored as-is and rendered with no runtime JS:
+     <div class="rt-callout rt-callout-<type>">
+       <span class="rt-callout-icon" aria-hidden="true">inline SVG | emoticon img</span>
+       <div class="rt-callout-body">…rich HTML…</div></div>
+   Types: success / info / warning / error / other (emoticon icon). Each type
+   sets the accent --co-c; background and the thin full border derive from it
+   via color-mix, so the dark-theme accent swap below re-tints everything.
+   The accents live in their own custom properties because /theme.css tokens
+   don't cover per-callout hues; dark overrides mirror /theme.css's pattern —
+   explicit [data-theme="dark"] plus the OS-preference case. */
+:root {
+  --co-success: #1F8A45;
+  --co-info: #1D6FD6;
+  --co-warning: #B07C0A;
+  --co-error: #C43B32;
+  --co-other: #6A6A74;
+}
+[data-theme="dark"] {
+  --co-success: #57C777;
+  --co-info: #6AA9F0;
+  --co-warning: #E3B341;
+  --co-error: #F08078;
+  --co-other: #9C9CA7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --co-success: #57C777;
+    --co-info: #6AA9F0;
+    --co-warning: #E3B341;
+    --co-error: #F08078;
+    --co-other: #9C9CA7;
+  }
+}
+
+.prose .rt-callout, .rich .rt-callout {
+  --co-c: var(--co-other);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1.1rem;
+  margin: 1.5em 0;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--co-c) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--co-c) 45%, transparent);
+}
+.prose .rt-callout-success, .rich .rt-callout-success { --co-c: var(--co-success); }
+.prose .rt-callout-info,    .rich .rt-callout-info    { --co-c: var(--co-info); }
+.prose .rt-callout-warning, .rich .rt-callout-warning { --co-c: var(--co-warning); }
+.prose .rt-callout-error,   .rich .rt-callout-error   { --co-c: var(--co-error); }
+.prose .rt-callout-other,   .rich .rt-callout-other   { --co-c: var(--co-other); }
+
+.prose .rt-callout .rt-callout-icon, .rich .rt-callout .rt-callout-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 1.3rem; height: 1.3rem;
+  margin-top: 0.2em; /* optically centre on the first text line */
+  color: var(--co-c);
+}
+.prose .rt-callout .rt-callout-icon svg, .rich .rt-callout .rt-callout-icon svg { width: 100%; height: 100%; display: block; }
+.prose .rt-callout .rt-callout-icon img, .rich .rt-callout .rt-callout-icon img {
+  width: 100%; height: 100%; object-fit: contain; display: block; margin: 0; /* beats the inline rt-emoticon sizing */
+}
+.prose .rt-callout .rt-callout-body, .rich .rt-callout .rt-callout-body { flex: 1; min-width: 0; }
+.prose .rt-callout .rt-callout-body > :first-child, .rich .rt-callout .rt-callout-body > :first-child { margin-top: 0; }
+.prose .rt-callout .rt-callout-body > :last-child, .rich .rt-callout .rt-callout-body > :last-child { margin-bottom: 0; }
+.prose .rt-callout .rt-callout-body h2, .rich .rt-callout .rt-callout-body h2,
+.prose .rt-callout .rt-callout-body h3, .rich .rt-callout .rt-callout-body h3,
+.prose .rt-callout .rt-callout-body h4, .rich .rt-callout .rt-callout-body h4 {
+  color: var(--co-c);
+  margin-top: 0.6em;
+  margin-bottom: 0.25em;
+}

@@ -1,0 +1,46 @@
+/* Editor preview slide-out panel (public/js/preview.js). */
+.pv-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.18s ease;
+  z-index: 90;
+}
+.pv-backdrop.show { opacity: 1; visibility: visible; }
+
+.pv-panel {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(920px, 96vw);
+  background: var(--color-bg);
+  border-left: 1px solid var(--color-surface-dark);
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.25);
+  transform: translateX(100%);
+  transition: transform 0.22s ease;
+  z-index: 91;
+  display: flex; flex-direction: column;
+}
+.pv-panel.show { transform: translateX(0); }
+
+.pv-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--color-surface-dark);
+  background: var(--color-surface);
+  flex: none;
+}
+.pv-title { font-weight: 700; font-size: 0.95rem; }
+.pv-title .pv-note { display: block; font-weight: 400; font-size: 0.78rem; color: var(--color-muted); margin-top: 0.1rem; }
+.pv-close {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 1.6rem; line-height: 1; color: var(--color-muted);
+  padding: 0 0.3rem;
+}
+.pv-close:hover { color: var(--color-ink); }
+
+.pv-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff; /* neutral until the page's own theme paints */
+}

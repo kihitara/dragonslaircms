@@ -64,6 +64,18 @@ function etagMatches(ifNoneMatch, etag) {
   });
 }
 
+// Cache policy. Images live at unique timestamped keys and are never edited in
+// place (uploads create new keys), so cache them hard — a photo-heavy blog would
+// otherwise re-download multi-MB files and burn R2 egress. Non-image media keeps
+// a short revalidating window so replace-in-place (e.g. a swapped logo) still
+// propagates quickly. Trade-off: replacing an image at its exact key may need a
+// hard refresh to show the new bytes.
+function cacheControlFor(key, contentType) {
+  return isImageKey(key, contentType)
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=60, must-revalidate';
+}
+
 // GET /media/<key> → Response, or null (unknown key / not a media path) so the
 // caller can fall through to its 404.
 export async function handleMediaFile(request, env, url) {
@@ -91,7 +103,7 @@ export async function handleMediaFile(request, env, url) {
     if (etagMatches(inm, head.etag)) {
       return new Response(null, {
         status: 304,
-        headers: { ETag: head.httpEtag, 'Cache-Control': 'public, max-age=60, must-revalidate' },
+        headers: { ETag: head.httpEtag, 'Cache-Control': cacheControlFor(key, head.httpMetadata && head.httpMetadata.contentType) },
       });
     }
   }
@@ -103,9 +115,7 @@ export async function handleMediaFile(request, env, url) {
   obj.writeHttpMetadata(headers); // stored contentType (set at upload time)
   if (!headers.get('Content-Type')) headers.set('Content-Type', contentTypeForKey(key));
   headers.set('ETag', obj.httpEtag);
-  // Short freshness window + revalidation so replace-in-place propagates. The
-  // 304 path above keeps repeat views cheap despite the low max-age.
-  headers.set('Cache-Control', 'public, max-age=60, must-revalidate');
+  headers.set('Cache-Control', cacheControlFor(key, headers.get('Content-Type')));
   headers.set('X-Content-Type-Options', 'nosniff'); // never sniff a file into something executable
   return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
 }

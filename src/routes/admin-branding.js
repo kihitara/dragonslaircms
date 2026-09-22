@@ -562,10 +562,17 @@ async function uploadFont(request, env, user) {
 const TEXT_SETTINGS = [
   ['org_name', 'Organisation name', 'text', 'Shown in the header, footer, admin and page titles.'],
   ['org_tagline', 'Tagline', 'text', 'Short line shown on the home page and in the footer.'],
+  ['site_url', 'Site URL (canonical)', 'text', 'The public base URL, e.g. https://example.com (no trailing slash). Used for canonical links, the RSS feed, the sitemap and links in emails. Falls back to SITE_URL in wrangler.jsonc, then the request origin.'],
+  ['email_from', 'Email “From” address', 'text', 'The address outgoing email is sent from, e.g. My Site <hello@example.com>. Must be an allowed sender set up in Cloudflare Email Routing. Falls back to SITE_EMAIL_FROM in wrangler.jsonc.'],
   ['logo_url', 'Logo / favicon image', 'media', 'Shown in the site header, the admin, and as the browser tab icon. Defaults to the bundled icon. A square SVG or PNG works best.'],
   ['seo_title_template', 'SEO title template', 'text', 'Optional — how page titles are composed, e.g. "%s — My Site" or "%s | My Site".'],
   ['seo_description', 'Default SEO description', 'textarea', 'Used when a page has no description of its own.'],
   ['og_image_url', 'Default share image URL', 'media', 'Open Graph image used when a page has no share image.'],
+];
+// Select settings: [key, label, options([value,label]), hint, group, default].
+const SELECT_SETTINGS = [
+  ['gallery_layout_default', 'Default gallery layout', [['grid', 'Grid'], ['carousel', 'Carousel']],
+    'The layout preset when you insert a gallery into an article. Each gallery can still be switched individually.', 'Galleries', 'grid'],
 ];
 // Toggles default ON when the row is absent. Fourth element groups them into
 // fieldsets.
@@ -587,6 +594,11 @@ export async function handleSettings(request, env, url, user) {
     for (const [key] of TEXT_SETTINGS) {
       await setSiteSetting(DB, key, String(form.get(key) ?? '').trim());
     }
+    for (const [key, , options, , , def] of SELECT_SETTINGS) {
+      const val = String(form.get(key) ?? '').trim();
+      const ok = options.some(([v]) => v === val);
+      await setSiteSetting(DB, key, ok ? val : def);
+    }
     for (const [key] of TOGGLE_SETTINGS) {
       await setSiteSetting(DB, key, form.get(key) ? '1' : '0'); // unchecked boxes aren't posted
     }
@@ -606,6 +618,22 @@ export async function handleSettings(request, env, url, user) {
       <p class="hint">${escapeHtml(hint)}</p>
     </div>`).join('');
 
+  // Select settings, grouped into fieldsets by their fifth element.
+  const selectGroups = {};
+  SELECT_SETTINGS.forEach(([key, label, options, hint, group, def]) => {
+    const cur = settings[key] || def;
+    const opts = options.map(([v, l]) => `<option value="${escapeAttr(v)}"${cur === v ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('');
+    (selectGroups[group] = selectGroups[group] || []).push(`
+    <div class="field">
+      <label for="set-${key}">${escapeHtml(label)}</label>
+      <select id="set-${key}" name="${key}">${opts}</select>
+      <p class="hint">${escapeHtml(hint)}</p>
+    </div>`);
+  });
+  const selectFieldsets = Object.keys(selectGroups).map((g) =>
+    `<fieldset><legend>${escapeHtml(g)}</legend>${selectGroups[g].join('')}</fieldset>`
+  ).join('');
+
   // Group the toggles into a fieldset each (by their fourth element).
   const toggleGroups = {};
   TOGGLE_SETTINGS.forEach(([key, label, hint, group]) => {
@@ -624,6 +652,7 @@ export async function handleSettings(request, env, url, user) {
     ${noticeHtml(url)}
     <form method="post" action="/admin/settings">
       <fieldset><legend>Organisation &amp; SEO</legend>${textFields}</fieldset>
+      ${selectFieldsets}
       ${toggleFieldsets}
       <div class="form-actions"><button class="btn" type="submit">Save settings</button></div>
     </form>`;

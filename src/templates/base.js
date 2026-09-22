@@ -84,10 +84,14 @@ export function sitePage({ env, title, description, canonical, shareImage, nav =
       <ul>${(col.links || []).map((l) => `<li><a href="${escapeAttr(l.href)}">${escapeHtml(l.label)}</a></li>`).join('')}</ul>
     </div>`).join('');
 
+  // RSS autodiscovery — public pages only (this shell), so feed readers and
+  // browsers can find /feed.xml from any page.
+  const feedLink = `<link rel="alternate" type="application/rss+xml" title="${escapeAttr(siteTitle)} — RSS" href="/feed.xml">`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-${headHtml({ title: fullTitle, description, canonical, shareImage, favicon: logo, extraHead })}
+${headHtml({ title: fullTitle, description, canonical, shareImage, favicon: logo, extraHead: feedLink + extraHead })}
 </head>
 <body class="surface-default ${bodyClass}">
 <header class="site-header">
@@ -98,6 +102,9 @@ ${headHtml({ title: fullTitle, description, canonical, shareImage, favicon: logo
       <a class="site-nav-title" href="/">${escapeHtml(siteTitle)}</a>
       ${navHtml}
       ${readerLink}
+      <a class="site-search-link" href="/search" aria-label="Search" title="Search">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
+      </a>
       <button class="theme-toggle" type="button" aria-label="Toggle theme">☾</button>
     </nav>
   </div>
@@ -126,6 +133,8 @@ const ADMIN_NAV = [
   { group: 'Content' },
   { href: '/admin/pages', label: 'Pages' },
   { href: '/admin/articles', label: 'Articles' },
+  { href: '/admin/categories', label: 'Categories' },
+  { href: '/admin/series', label: 'Series' },
   { href: '/admin/tags', label: 'Tags' },
   { href: '/admin/people', label: 'People' },
   { href: '/admin/media', label: 'Media' },

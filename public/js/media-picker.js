@@ -29,15 +29,20 @@
       .then(function (d) { return { items: (d && d.items) || [], folders: (d && d.folders) || [] }; });
   }
 
-  function open(callback) {
+  // open(callback)                 — single pick; callback(url, meta)
+  // open(callback, { multiple:1 }) — multi-select; callback([{url, meta}, …])
+  function open(callback, opts) {
+    opts = opts || {};
+    var multiple = !!opts.multiple;
     var state = { items: [], folders: [], folder: '', q: '' };
+    var picked = []; // multi-select: [{ url, meta }]
 
     var overlay = el('div', 'mp-overlay');
     var modal = el('div', 'mp-modal');
     modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true');
 
     var head = el('div', 'mp-head');
-    head.appendChild(el('strong', null, 'Media library'));
+    head.appendChild(el('strong', null, multiple ? 'Media library — pick images' : 'Media library'));
     var close = el('button', 'mp-close'); close.type = 'button';
     close.setAttribute('aria-label', 'Close'); close.textContent = '×';
     head.appendChild(close);
@@ -51,6 +56,17 @@
 
     var body = el('div', 'mp-body');
     modal.appendChild(head); modal.appendChild(bar); modal.appendChild(body);
+
+    // Multi-select footer: running count + confirm button.
+    var foot = null, addBtn = null;
+    if (multiple) {
+      foot = el('div', 'mp-foot');
+      addBtn = el('button', 'btn', 'Add 0'); addBtn.type = 'button'; addBtn.disabled = true;
+      var hint = el('span', 'mp-foot-hint', 'Click images to select; upload to add new ones.');
+      foot.appendChild(hint); foot.appendChild(addBtn);
+      modal.appendChild(foot);
+      addBtn.addEventListener('click', function () { if (picked.length && callback) callback(picked.slice()); done(); });
+    }
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
@@ -58,7 +74,34 @@
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
     }
-    function choose(url) { if (callback) callback(url); done(); }
+    // meta (optional) carries a responsive-variant manifest for freshly uploaded
+    // images: { src, variants:[{w,url}], width, height }. Consumers that only
+    // need a URL ignore it.
+    function choose(url, meta) { if (callback) callback(url, meta); done(); }
+
+    function isPicked(url) { return picked.some(function (p) { return p.url === url; }); }
+    function refreshFoot() { if (addBtn) { addBtn.textContent = 'Add ' + picked.length; addBtn.disabled = !picked.length; } }
+    // Toggle a library item in/out of the multi-select set (meta optional).
+    function toggle(url, meta, tile) {
+      var i = picked.findIndex(function (p) { return p.url === url; });
+      if (i >= 0) { picked.splice(i, 1); if (tile) tile.classList.remove('mp-tile-sel'); }
+      else { picked.push({ url: url, meta: meta }); if (tile) tile.classList.add('mp-tile-sel'); }
+      refreshFoot();
+    }
+
+    // Multipart upload of one blob to the normal endpoint (json=1) → Promise<url>.
+    function uploadBlob(file, folder) {
+      var fd = new FormData();
+      fd.append('file', file);
+      fd.append('json', '1');
+      if (folder) fd.append('folder', folder);
+      return fetch('/admin/media/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          if (res.ok && res.d && res.d.url) return res.d.url;
+          throw new Error((res.d && res.d.error) || 'Upload failed');
+        });
+    }
     function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); done(); } }
     close.addEventListener('click', done);
     overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) done(); });
@@ -103,7 +146,8 @@
           thumb.appendChild(img); tile.appendChild(thumb);
           tile.appendChild(el('div', 'mp-name', it.name));
           if (it.folder) tile.appendChild(el('div', 'mp-tag', it.folder));
-          tile.addEventListener('click', function () { choose(it.url); });
+          if (multiple && isPicked(it.url)) tile.classList.add('mp-tile-sel');
+          tile.addEventListener('click', function () { multiple ? toggle(it.url, null, tile) : choose(it.url); });
           grid.appendChild(tile);
         });
         body.appendChild(grid);
@@ -115,7 +159,8 @@
           chip.appendChild(el('span', 'mp-chip-type', ftype(it.name)));
           chip.appendChild(el('span', 'mp-chip-name', it.name));
           if (it.folder) chip.appendChild(el('span', 'mp-tag', it.folder));
-          chip.addEventListener('click', function () { choose(it.url); });
+          if (multiple && isPicked(it.url)) chip.classList.add('mp-tile-sel');
+          chip.addEventListener('click', function () { multiple ? toggle(it.url, null, chip) : choose(it.url); });
           chips.appendChild(chip);
         });
         body.appendChild(chips);
@@ -143,18 +188,42 @@
         var file = f.files && f.files[0];
         f.remove();
         if (!file) return;
-        status.textContent = 'Uploading…';
-        var fd = new FormData();
-        fd.append('file', file);
-        fd.append('json', '1');
         // Viewing a real folder? Drop the new file straight into it.
-        if (state.folder && state.folder !== '__unfiled') fd.append('folder', state.folder);
-        fetch('/admin/media/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
-          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
-          .then(function (res) {
-            if (res.ok && res.d && res.d.url) { status.textContent = ''; choose(res.d.url); }
-            else status.textContent = (res.d && res.d.error) || 'Upload failed.';
-          }, function () { status.textContent = 'Upload failed.'; });
+        var folder = (state.folder && state.folder !== '__unfiled') ? state.folder : null;
+
+        // Images: downscale to WebP variants client-side, upload each, and hand
+        // back a manifest so the caller (the article image dialog) can build a
+        // responsive srcset. Non-images upload as-is.
+        if (window.IMG_RESIZE && window.IMG_RESIZE.isImage(file)) {
+          status.textContent = 'Processing image…';
+          window.IMG_RESIZE.toVariants(file).then(function (res) {
+            if (!res.variants.length) throw new Error('no variants');
+            status.textContent = 'Uploading…';
+            var baseName = file.name.replace(/\.[^.]+$/, '') || 'image';
+            return Promise.all(res.variants.map(function (v) {
+              return uploadBlob(new File([v.blob], baseName + '-' + v.w + '.' + v.ext, { type: v.type }), folder)
+                .then(function (url) { return { w: v.w, url: url }; });
+            })).then(function (uploaded) {
+              uploaded.sort(function (a, b) { return a.w - b.w; });
+              var largest = uploaded[uploaded.length - 1];
+              status.textContent = '';
+              var meta = { src: largest.url, variants: uploaded, width: res.width, height: res.height };
+              if (multiple) { picked.push({ url: largest.url, meta: meta }); refreshFoot(); reload(); }
+              else choose(largest.url, meta);
+            });
+          }).catch(function () { status.textContent = 'Upload failed.'; });
+          return;
+        }
+
+        status.textContent = 'Uploading…';
+        uploadBlob(file, folder).then(
+          function (url) {
+            status.textContent = '';
+            if (multiple) { picked.push({ url: url, meta: null }); refreshFoot(); reload(); }
+            else choose(url);
+          },
+          function () { status.textContent = 'Upload failed.'; }
+        );
       });
       f.click();
     });
@@ -175,8 +244,12 @@
     box.appendChild(btn);
     btn.addEventListener('click', function (e) {
       e.preventDefault();
-      open(function (url) {
+      open(function (url, meta) {
         input.value = url;
+        // Stash the responsive manifest on the element for the image dialog to
+        // read; drop it for plain picks so a hand-typed URL stays plain.
+        if (meta && meta.variants && meta.variants.length > 1) input.__mediaMeta = meta;
+        else delete input.__mediaMeta;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
       });

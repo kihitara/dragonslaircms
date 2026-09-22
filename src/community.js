@@ -31,9 +31,10 @@ function renderBody(row) {
   return row.body_format === 'html' ? String(row.body || '') : nl2br(row.body);
 }
 
-// Public URL of an article: category decides the /blog vs /news prefix.
+// Public URL of an article: a single flat /posts prefix. Category is metadata
+// (its own listing lives at /category/<slug>), so it no longer shapes permalinks.
 export function articlePath(article) {
-  return `/${article.category === 'news' ? 'news' : 'blog'}/${article.slug}`;
+  return `/posts/${article.slug}`;
 }
 
 // ── Correction widget (shared by articles and pages) ────────────────────────

@@ -29,7 +29,7 @@ import { contentTypeForKey, isImageKey, fileTypeLabel, makeMediaKey } from './me
 // Shared <head> snippet for any admin page with media URL fields: the modal
 // picker (window.MEDIA) plus its styles. Classic (non-deferred) script so
 // window.MEDIA exists before the page's own editor scripts run.
-export const MEDIA_PICKER_HEAD = '<link rel="stylesheet" href="/css/media-picker.css"><script src="/js/media-picker.js"></script>';
+export const MEDIA_PICKER_HEAD = '<link rel="stylesheet" href="/css/media-picker.css"><script src="/js/image-resize.js"></script><script src="/js/media-picker.js"></script>';
 
 export async function handleMedia(request, env, url, user) {
   const path = url.pathname.replace(/\/$/, '');
@@ -208,6 +208,35 @@ document.addEventListener('change', function (e) {
 });
 </script>`;
 
+// Downscale images before the library upload posts them — big phone photos
+// become a single web-sized WebP. Non-images (and browsers without the resizer)
+// fall through to the normal multipart submit. Progressive enhancement only.
+const UPLOAD_RESIZE_SCRIPT = `<script>
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (!form || !form.classList || !form.classList.contains('media-upload-form')) return;
+  if (!window.IMG_RESIZE) return;
+  var input = form.querySelector('input[type=file]');
+  var file = input && input.files && input.files[0];
+  if (!file || !window.IMG_RESIZE.isImage(file)) return; // non-image → normal upload
+  e.preventDefault();
+  var btn = form.querySelector('button[type=submit]');
+  if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'Processing…'; }
+  window.IMG_RESIZE.toVariants(file, { single: true }).then(function (res) {
+    var v = res.variants[res.variants.length - 1];
+    if (!v) throw new Error('resize failed');
+    var base = file.name.replace(/\\.[^.]+$/, '') || 'image';
+    var fd = new FormData(form);
+    fd.set('file', new File([v.blob], base + '.' + v.ext, { type: v.type }));
+    fd.append('json', '1');
+    return fetch(form.action, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) { return r.json(); });
+  }).then(function (d) {
+    if (d && d.ok) { window.location.assign('/admin/media'); }
+    else { window.alert((d && d.error) || 'Upload failed.'); if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Upload'; } }
+  }).catch(function () { window.alert('Upload failed.'); if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Upload'; } });
+}, true);
+</script>`;
+
 // <option> list for a folder select: Unfiled + every known folder.
 function folderOptions(folders, selected) {
   return `<option value=""${!selected ? ' selected' : ''}>Unfiled</option>` +
@@ -337,9 +366,9 @@ async function libraryPage(env, user, url) {
     ${folderBar}
     ${shown.length ? `<div class="media-grid">${tiles}</div>`
       : `<p class="muted">${items.length ? 'No files in this folder yet.' : 'No files yet — upload one above.'}</p>`}
-    ${COPY_SCRIPT}${REPLACE_SCRIPT}`;
+    ${COPY_SCRIPT}${REPLACE_SCRIPT}${UPLOAD_RESIZE_SCRIPT}`;
 
-  return html(adminPage({ env, user, title: 'Media', path: '/admin/media', content, extraHead: MEDIA_STYLES + CONFIRM_MODAL_HEAD }));
+  return html(adminPage({ env, user, title: 'Media', path: '/admin/media', content, extraHead: MEDIA_STYLES + CONFIRM_MODAL_HEAD + '<script src="/js/image-resize.js"></script>' }));
 }
 
 // JSON listing for the modal picker: every object plus its folder tag.

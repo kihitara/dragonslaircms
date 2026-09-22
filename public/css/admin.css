@@ -223,6 +223,7 @@
 .status-pill.draft { background: var(--color-surface-dark); color: var(--color-muted); }
 .status-pill.published { background: var(--color-accent-soft); color: var(--color-accent-dark); }
 .status-pill.modified { background: var(--color-brand-soft); color: var(--color-brand-dark); }
+.status-pill.scheduled { background: var(--color-brand-soft); color: var(--color-brand-dark); }
 .status-pill.pending { background: #FCF3D7; color: #8A6D1B; }
 [data-theme="dark"] .status-pill.pending { background: #3A311A; color: #E8C96A; }
 .status-pill.approved { background: var(--color-accent-soft); color: var(--color-accent-dark); }

@@ -49,6 +49,15 @@ export async function handleArticles(request, env, url, user) {
   m = path.match(/^\/admin\/articles\/(\d+)\/publish$/);
   if (m && method === 'POST') return publish(request, env, user, Number(m[1]));
 
+  m = path.match(/^\/admin\/articles\/(\d+)\/schedule$/);
+  if (m && method === 'POST') return schedule(request, env, user, Number(m[1]));
+
+  m = path.match(/^\/admin\/articles\/(\d+)\/unschedule$/);
+  if (m && method === 'POST') return unschedule(env, user, Number(m[1]));
+
+  m = path.match(/^\/admin\/articles\/(\d+)\/unpublish$/);
+  if (m && method === 'POST') return unpublish(env, user, Number(m[1]));
+
   m = path.match(/^\/admin\/articles\/(\d+)\/revert$/);
   if (m && method === 'POST') return revertToPublished(env, user, Number(m[1]));
 
@@ -95,6 +104,26 @@ async function setArticleTags(DB, articleId, tagIds) {
   }
 }
 
+// Current series memberships for an article: series_id → position.
+async function getArticleSeries(DB, id) {
+  const { results } = await DB.prepare('SELECT series_id, position FROM article_series WHERE article_id = ?').bind(id).all();
+  return new Map((results || []).map((r) => [r.series_id, r.position]));
+}
+
+// Replace an article's series memberships from the editor form: checkboxes
+// `series_ids` (series id) plus a per-series position `series_pos_<id>`. Series
+// ids are validated against the series table so a stale id can't break the FK.
+async function setArticleSeries(DB, articleId, form) {
+  const ids = form.getAll('series_ids').map(Number).filter(Boolean);
+  await DB.prepare('DELETE FROM article_series WHERE article_id = ?').bind(articleId).run();
+  for (const sid of ids) {
+    const pos = parseInt(String(form.get(`series_pos_${sid}`) || '0'), 10) || 0;
+    await DB.prepare(
+      'INSERT OR IGNORE INTO article_series (article_id, series_id, position) SELECT ?, id, ? FROM series WHERE id = ?'
+    ).bind(articleId, pos, sid).run();
+  }
+}
+
 async function tagSlugsFor(DB, tagIds) {
   if (!tagIds.length) return [];
   const marks = tagIds.map(() => '?').join(',');
@@ -115,7 +144,9 @@ function articleFromForm(form) {
     slug: slugify(str('slug') || str('title')) || `article-${Date.now()}`,
     title: str('title') || 'Untitled',
     subheading: str('subheading') || null,
-    category: str('category') === 'news' ? 'news' : 'blog',
+    // Any category slug (validated against the managed list by the editor's
+    // select). Sanitised to slug form; defaults to 'blog' when none is chosen.
+    category: slugify(str('category')) || 'blog',
     publish_date: str('publish_date') || null,
     cover: str('cover') || null,
     // Palette surface key for the hero overlay ('' = site default). Keys only
@@ -174,20 +205,24 @@ async function listPage(env, user, url) {
   const totalRow = await env.DB.prepare('SELECT COUNT(*) AS total FROM articles').first();
   const total = totalRow ? totalRow.total : 0;
   const { results } = await env.DB.prepare(
-    `SELECT a.id, a.title, a.category, a.status, a.publish_date,
+    `SELECT a.id, a.title, a.category, a.status, a.publish_date, a.scheduled_for,
             (SELECT COUNT(*) FROM comments c WHERE c.article_id = a.id) AS comment_count
      FROM articles a ORDER BY a.updated_at DESC LIMIT ? OFFSET ?`
   ).bind(pageSize, (page - 1) * pageSize).all();
   const articles = results || [];
 
-  const rows = articles.length ? articles.map((a) => `
+  const rows = articles.length ? articles.map((a) => {
+    const scheduled = a.status === 'draft' && a.scheduled_for;
+    const pill = scheduled ? 'scheduled' : a.status;
+    return `
       <tr>
         <td class="cell-main"><a href="${BASE}/${a.id}">${escapeHtml(a.title)}</a></td>
         <td data-label="Category">${escapeHtml(a.category)}</td>
-        <td data-label="Status"><span class="status-pill ${escapeAttr(a.status)}">${escapeHtml(a.status)}</span></td>
+        <td data-label="Status"><span class="status-pill ${escapeAttr(pill)}">${escapeHtml(pill)}</span></td>
         <td data-label="Publish date">${escapeHtml(formatDate(a.publish_date) || '—')}</td>
         <td data-label="Comments">${a.comment_count}</td>
-      </tr>`).join('')
+      </tr>`;
+  }).join('')
     : '<tr><td colspan="5" class="muted">No articles yet.</td></tr>';
 
   const content = `
@@ -211,8 +246,10 @@ ${MEDIA_PICKER_HEAD}
 ${CONFIRM_MODAL_HEAD}
 ${PREVIEW_HEAD}
 <link rel="stylesheet" href="/css/wysiwyg.css">
+<link rel="stylesheet" href="/css/blocks.css">
 <script src="/js/wysiwyg.js" defer></script>
 <style>
+.rt-ed .gallery { cursor: pointer; }
 .chk-group { max-height: 180px; overflow-y: auto; border: 1px solid var(--color-surface-dark); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; background: var(--color-bg); }
 .chk-group label { display: flex; gap: 0.45rem; align-items: center; font-weight: 400; font-size: 0.9rem; margin: 0.15rem 0; }
 .chk-group input { width: auto; }
@@ -220,6 +257,24 @@ ${PREVIEW_HEAD}
 .editor-side .card .field:last-child { margin-bottom: 0; }
 .revisions-table td { font-size: 0.88rem; }
 </style>`;
+
+// Converts the local datetime picker to an ISO-UTC value on Schedule, and shows
+// any stored ISO schedule time in the viewer's own timezone.
+const SCHEDULE_SCRIPT = `<script>
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-schedule-btn]');
+    if (!b) return;
+    var local = document.getElementById('scheduled_at_local');
+    var hidden = document.getElementById('scheduled_for');
+    if (local && hidden) hidden.value = local.value ? new Date(local.value).toISOString() : '';
+  });
+  document.querySelectorAll('[data-localtime]').forEach(function (el) {
+    var iso = el.getAttribute('data-localtime'); if (!iso) return;
+    var d = new Date(iso); if (!isNaN(d)) el.textContent = d.toLocaleString();
+  });
+})();
+</script>`;
 
 function statusPill(status) {
   const s = status || 'draft';
@@ -242,6 +297,9 @@ async function editPage(env, user, url, id) {
 
   const people = (await DB.prepare('SELECT slug, name FROM people ORDER BY sort_order, name').all()).results || [];
   const tags = (await DB.prepare('SELECT id, title FROM tags ORDER BY title').all()).results || [];
+  const categories = (await DB.prepare('SELECT slug, title FROM categories ORDER BY sort_order, title').all()).results || [];
+  const seriesList = (await DB.prepare('SELECT id, title FROM series ORDER BY sort_order, title').all()).results || [];
+  const seriesMembership = id ? await getArticleSeries(DB, id) : new Map();
   const revisions = article ? await getRevisions(DB, 'article', id) : [];
 
   // Hero colour choices: built-in surfaces plus any custom ones from the
@@ -252,12 +310,22 @@ async function editPage(env, user, url, id) {
   const surfaceLabel = (key) => SURFACE_LABELS[key]
     || (storedSurfaces[key] && typeof storedSurfaces[key].label === 'string' && storedSurfaces[key].label)
     || key;
-  const correctionsOffSiteWide = ((await getSiteSettings(DB)).corrections_enabled ?? '1') === '0';
+  const siteSettings = await getSiteSettings(DB);
+  const correctionsOffSiteWide = (siteSettings.corrections_enabled ?? '1') === '0';
+  const galleryDefault = siteSettings.gallery_layout_default === 'carousel' ? 'carousel' : 'grid';
   const heroSurface = article?.hero_surface || '';
   const heroOptions = [`<option value=""${heroSurface === '' ? ' selected' : ''}>Default (Slate dark)</option>`]
     .concat(surfaceKeys.map((k) =>
       `<option value="${escapeAttr(k)}"${heroSurface === k ? ' selected' : ''}>${escapeHtml(surfaceLabel(k))}</option>`))
     .join('');
+
+  // Category select from the managed list. Preserve an article's stored slug
+  // even if that category was since deleted (orphan) by adding it as an option.
+  const curCat = article?.category || 'blog';
+  const catList = categories.slice();
+  if (curCat && !catList.some((c) => c.slug === curCat)) catList.push({ slug: curCat, title: `${curCat} (removed)` });
+  const catOptions = catList.map((c) =>
+    `<option value="${escapeAttr(c.slug)}"${curCat === c.slug ? ' selected' : ''}>${escapeHtml(c.title)}</option>`).join('');
 
   const v = (k) => escapeAttr(article?.[k] ?? '');
   const peopleChecks = (name, selected) => people.length
@@ -267,11 +335,27 @@ async function editPage(env, user, url, id) {
     ? tags.map((t) => `<label><input type="checkbox" name="tags" value="${t.id}"${tagIds.includes(t.id) ? ' checked' : ''}> ${escapeHtml(t.title)}</label>`).join('')
     : '<span class="muted small">No tags yet — add some under Tags.</span>';
 
+  // Series membership: a checkbox per series plus its position within that
+  // series (only meaningful when checked). Multiple series per article.
+  const seriesChecks = seriesList.length
+    ? seriesList.map((s) => {
+        const member = seriesMembership.has(s.id);
+        const pos = member ? seriesMembership.get(s.id) : 0;
+        return `<label class="series-row"><input type="checkbox" name="series_ids" value="${s.id}"${member ? ' checked' : ''}> <span>${escapeHtml(s.title)}</span>
+          <input type="number" name="series_pos_${s.id}" value="${escapeAttr(String(pos))}" aria-label="Position in ${escapeAttr(s.title)}" title="Order within this series" style="width:4.5rem;margin-left:auto"></label>`;
+      }).join('')
+    : '<span class="muted small">No series yet — add some under Series.</span>';
+
   const err = url.searchParams.get('err');
   const notice = err === 'slug' ? '<div class="notice notice-error">That slug is already in use — pick another.</div>'
     : err === 'revision' ? '<div class="notice notice-error">Could not restore that revision.</div>'
+    : err === 'schedule' ? '<div class="notice notice-error">Pick a date and time in the future to schedule.</div>'
+    : err === 'publisher' ? '<div class="notice notice-error">Scheduling requires the publisher role.</div>'
     : url.searchParams.get('saved') ? '<div class="notice notice-green">Saved.</div>'
     : url.searchParams.get('published') ? '<div class="notice notice-green">Published — the article is live.</div>'
+    : url.searchParams.get('scheduled') ? '<div class="notice notice-green">Scheduled — it will publish automatically at the chosen time.</div>'
+    : url.searchParams.get('unscheduled') ? '<div class="notice notice-green">Schedule cancelled — the article is back to a normal draft.</div>'
+    : url.searchParams.get('unpublished') ? '<div class="notice notice-green">Taken offline — it is back to draft and no longer on the site. Content and history are kept; press Publish to put it back.</div>'
     : '';
 
   const canPublish = roleAtLeast(user, 'publisher');
@@ -319,7 +403,7 @@ async function editPage(env, user, url, id) {
           </div>
           <div class="field">
             <label>Body</label>
-            <textarea name="content" data-richtext>${escapeHtml(article?.content ?? '')}</textarea>
+            <textarea name="content" data-richtext data-gallery data-gallery-default="${escapeAttr(galleryDefault)}">${escapeHtml(article?.content ?? '')}</textarea>
           </div>
         </div>
         <aside class="editor-side">
@@ -334,16 +418,29 @@ async function editPage(env, user, url, id) {
             </div>
             <div class="field">
               <label for="category">Category</label>
-              <select id="category" name="category">
-                <option value="blog"${(article?.category ?? 'blog') === 'blog' ? ' selected' : ''}>Blog</option>
-                <option value="news"${article?.category === 'news' ? ' selected' : ''}>News</option>
-              </select>
+              <select id="category" name="category">${catOptions}</select>
+              <div class="hint">Manage the list under <a href="/admin/categories">Categories</a>.</div>
             </div>
             <div class="field">
               <label for="publish_date">Publish date</label>
               <input type="date" id="publish_date" name="publish_date" value="${v('publish_date')}">
               <div class="hint">Set on first publish if left empty.</div>
             </div>
+            ${canPublish && status === 'draft' ? `
+            <div class="field">
+              <label>Schedule</label>
+              ${article?.scheduled_for ? `
+              <p class="hint">Publishes automatically on <strong><span data-localtime="${escapeAttr(article.scheduled_for)}">${escapeHtml(article.scheduled_for)}</span></strong> (checked every 15 min).</p>
+              <button class="btn btn-secondary btn-small" type="submit" formaction="${BASE}/${id}/unschedule" formnovalidate>Cancel schedule</button>
+              ` : (isNew ? `
+              <p class="hint">Save the article first, then you can schedule it to publish later.</p>
+              ` : `
+              <input type="datetime-local" id="scheduled_at_local" name="scheduled_at_local">
+              <input type="hidden" id="scheduled_for" name="scheduled_for">
+              <div class="hint">Saves the current draft and publishes it automatically at the chosen time.</div>
+              <button class="btn btn-small" type="submit" formaction="${BASE}/${id}/schedule" data-schedule-btn style="margin-top:0.4rem">Schedule</button>
+              `)}
+            </div>` : ''}
             <div class="field">
               <label for="cover">Cover image URL</label>
               <input type="text" id="cover" name="cover" value="${v('cover')}" placeholder="https://… or /media/…" data-media>
@@ -364,6 +461,11 @@ async function editPage(env, user, url, id) {
             <div class="field">
               <label>Tags</label>
               <div class="chk-group">${tagChecks}</div>
+            </div>
+            <div class="field">
+              <label>Series</label>
+              <div class="chk-group">${seriesChecks}</div>
+              <div class="hint">Tick a series and set this post's position (order) within it.</div>
             </div>
             <div class="field">
               <label for="meta_title">Meta title</label>
@@ -397,13 +499,15 @@ async function editPage(env, user, url, id) {
             ${!isNew ? `
             <div class="field" style="display:flex;gap:0.5rem;flex-wrap:wrap">
               ${status === 'modified' ? `<button class="btn btn-secondary btn-small" type="submit" formaction="${BASE}/${id}/revert" data-confirm="Discard the unpublished changes and restore the live version?" data-confirm-ok="Revert">Revert to published</button>` : ''}
+              ${canPublish && status !== 'draft' ? `<button class="btn btn-secondary btn-small" type="submit" formaction="${BASE}/${id}/unpublish" formnovalidate data-confirm="Take this article offline? It returns to draft and disappears from the site. Content and history are kept — you can publish it again anytime." data-confirm-ok="Take offline">Unpublish</button>` : ''}
               <button class="btn btn-danger btn-small" type="submit" formaction="${BASE}/${id}/delete" data-confirm="Delete this article and its comments? This cannot be undone." data-confirm-ok="Delete">Delete</button>
             </div>` : ''}
           </div>
         </aside>
       </div>
     </form>
-    ${revisionsHtml}`;
+    ${revisionsHtml}
+    ${SCHEDULE_SCRIPT}`;
 
   return html(adminPage({
     env, user, title: isNew ? 'New article' : `Edit: ${article.title}`, path: BASE, content, extraHead: EDITOR_HEAD,
@@ -414,7 +518,8 @@ async function editPage(env, user, url, id) {
 
 async function create(request, env, user) {
   const DB = env.DB;
-  const data = articleFromForm(await request.formData());
+  const form = await request.formData();
+  const data = articleFromForm(form);
   let id;
   try {
     const res = await DB.prepare(
@@ -432,6 +537,7 @@ async function create(request, env, user) {
     throw err;
   }
   await setArticleTags(DB, id, data.tagIds);
+  await setArticleSeries(DB, id, form);
   await saveRevision(DB, 'article', id, await recordOf(DB, data), data.title, user);
   await logActivity(DB, user, 'created', 'article', data.title);
   return redirect(`${BASE}/${id}?saved=1`);
@@ -441,7 +547,8 @@ async function save(request, env, user, id) {
   const DB = env.DB;
   const article = await getArticle(DB, id);
   if (!article) return redirect(BASE);
-  const data = articleFromForm(await request.formData());
+  const form = await request.formData();
+  const data = articleFromForm(form);
   // Draft stays draft; a live article gains unpublished changes → modified.
   const status = article.status === 'draft' ? 'draft' : 'modified';
   try {
@@ -450,9 +557,69 @@ async function save(request, env, user, id) {
     if (isSlugConflict(err)) return redirect(`${BASE}/${id}?err=slug`);
     throw err;
   }
+  await setArticleSeries(DB, id, form);
   await saveRevision(DB, 'article', id, await recordOf(DB, data), data.title, user);
   await logActivity(DB, user, 'updated', 'article', data.title);
   return redirect(`${BASE}/${id}?saved=1`);
+}
+
+// Reconstruct the articleFromForm-shaped data object from a stored row — used by
+// the scheduler, which publishes an article's already-saved draft content with
+// no form in hand.
+async function dataFromRow(DB, row) {
+  const arr = (s) => { try { const a = JSON.parse(s || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch { return []; } };
+  return {
+    slug: row.slug, title: row.title, subheading: row.subheading,
+    category: row.category || 'blog',
+    publish_date: row.publish_date, cover: row.cover, hero_surface: row.hero_surface || '',
+    authors: arr(row.authors), reviewers: arr(row.reviewers),
+    meta_title: row.meta_title, meta_description: row.meta_description, share_image: row.share_image,
+    content: row.content || '', comment_mode: row.comment_mode || 'enabled',
+    corrections_disabled: row.corrections_disabled ? 1 : 0,
+    tagIds: await getArticleTagIds(DB, row.id),
+  };
+}
+
+// Freeze `data` as the live version: write the columns, snapshot it, set
+// 'published', clear any schedule, record a revision, and (first publish only)
+// email subscribers. Shared by the manual Publish action and the scheduler.
+async function finalizePublish(env, id, user, data) {
+  const DB = env.DB;
+  const article = await getArticle(DB, id);
+  if (!data.publish_date) data.publish_date = new Date().toISOString().slice(0, 10);
+  const snapshot = await recordOf(DB, data);
+  const firstPublish = !article.published_snapshot;
+  await updateArticle(DB, id, data, 'published');
+  await DB.prepare('UPDATE articles SET published_snapshot = ?, scheduled_for = NULL WHERE id = ?')
+    .bind(JSON.stringify(snapshot), id).run();
+  await saveRevision(DB, 'article', id, snapshot, `${data.title} (published)`, user);
+  await logActivity(DB, user, 'published', 'article', data.title);
+  if (firstPublish) {
+    await notifyNewArticle(env, await getArticle(DB, id)); // first time live → email subscribers
+  }
+}
+
+// Publish due scheduled articles. Called from the Worker's scheduled() cron.
+// Returns the number published. A synthetic user attributes the activity/revision.
+export async function publishScheduledArticles(env) {
+  const DB = env.DB;
+  const now = new Date().toISOString();
+  let rows;
+  try {
+    ({ results: rows } = await DB.prepare(
+      `SELECT * FROM articles WHERE status = 'draft' AND scheduled_for IS NOT NULL AND scheduled_for <= ?`
+    ).bind(now).all());
+  } catch { return 0; } // column missing (un-migrated) → nothing to do
+  let published = 0;
+  for (const row of rows || []) {
+    try {
+      await finalizePublish(env, row.id, { id: null, name: 'Scheduler' }, await dataFromRow(DB, row));
+      published++;
+    } catch (err) {
+      console.error('[schedule] failed to publish article', row.id, err?.message || err);
+    }
+  }
+  return published;
 }
 
 async function publish(request, env, user, id) {
@@ -467,27 +634,69 @@ async function publish(request, env, user, id) {
   if (!article) return redirect(BASE);
 
   // Publish submits the edit form: apply the save, then freeze it as the snapshot.
-  const data = articleFromForm(await request.formData());
-  if (!data.publish_date) data.publish_date = new Date().toISOString().slice(0, 10);
-  const snapshot = await recordOf(DB, data);
-  const firstPublish = !article.published_snapshot;
-
+  const form = await request.formData();
+  const data = articleFromForm(form);
   try {
-    await updateArticle(DB, id, data, 'published');
+    await finalizePublish(env, id, user, data);
   } catch (err) {
     if (isSlugConflict(err)) return redirect(`${BASE}/${id}?err=slug`);
     throw err;
   }
-  await DB.prepare('UPDATE articles SET published_snapshot = ? WHERE id = ?')
-    .bind(JSON.stringify(snapshot), id).run();
-
-  await saveRevision(DB, 'article', id, snapshot, `${data.title} (published)`, user);
-  await logActivity(DB, user, 'published', 'article', data.title);
-
-  if (firstPublish) {
-    await notifyNewArticle(env, await getArticle(DB, id)); // first time live → email subscribers
-  }
+  await setArticleSeries(DB, id, form);
   return redirect(`${BASE}/${id}?published=1`);
+}
+
+// Save the current edits and schedule the article to auto-publish at a future
+// time. Publisher-gated (it will publish without further review). scheduled_for
+// arrives as an ISO-UTC string (the editor converts the local picker value).
+async function schedule(request, env, user, id) {
+  const DB = env.DB;
+  if (!roleAtLeast(user, 'publisher')) return redirect(`${BASE}/${id}?err=publisher`);
+  const article = await getArticle(DB, id);
+  if (!article) return redirect(BASE);
+  const form = await request.formData();
+  const when = String(form.get('scheduled_for') || '').trim();
+  const ts = when ? new Date(when) : null;
+  if (!ts || isNaN(ts) || ts.getTime() <= Date.now()) {
+    return redirect(`${BASE}/${id}?err=schedule`);
+  }
+  const data = articleFromForm(form);
+  try {
+    await updateArticle(DB, id, data, 'draft'); // stays hidden until the cron publishes it
+  } catch (err) {
+    if (isSlugConflict(err)) return redirect(`${BASE}/${id}?err=slug`);
+    throw err;
+  }
+  await DB.prepare('UPDATE articles SET scheduled_for = ? WHERE id = ?').bind(ts.toISOString(), id).run();
+  await setArticleSeries(DB, id, form);
+  await saveRevision(DB, 'article', id, await recordOf(DB, data), `${data.title} (scheduled)`, user);
+  await logActivity(DB, user, 'scheduled', 'article', data.title);
+  return redirect(`${BASE}/${id}?scheduled=1`);
+}
+
+async function unschedule(env, user, id) {
+  const DB = env.DB;
+  const article = await getArticle(DB, id);
+  if (!article) return redirect(BASE);
+  await DB.prepare('UPDATE articles SET scheduled_for = NULL WHERE id = ?').bind(id).run();
+  await logActivity(DB, user, 'unscheduled', 'article', article.title);
+  return redirect(`${BASE}/${id}?unscheduled=1`);
+}
+
+// Take a live article offline: return it to 'draft' so it drops out of every
+// public listing/view, keeping its content, published_snapshot and revisions.
+// Re-publishing later snapshots the current working copy as usual.
+async function unpublish(env, user, id) {
+  const DB = env.DB;
+  if (!roleAtLeast(user, 'publisher')) return redirect(`${BASE}/${id}?err=publisher`);
+  const article = await getArticle(DB, id);
+  if (!article) return redirect(BASE);
+  if (article.status === 'draft') return redirect(`${BASE}/${id}`);
+  await DB.prepare(
+    "UPDATE articles SET status = 'draft', scheduled_for = NULL, updated_at = datetime('now') WHERE id = ?"
+  ).bind(id).run();
+  await logActivity(DB, user, 'unpublished', 'article', article.title);
+  return redirect(`${BASE}/${id}?unpublished=1`);
 }
 
 // Discard unpublished edits: copy the frozen snapshot back over the row.
@@ -500,7 +709,7 @@ async function revertToPublished(env, user, id) {
 
   const data = {
     slug: snap.slug, title: snap.title, subheading: snap.subheading ?? null,
-    category: snap.category === 'news' ? 'news' : 'blog',
+    category: snap.category || 'blog',
     publish_date: snap.publish_date ?? null, cover: snap.cover ?? null,
     hero_surface: snap.hero_surface ?? '',
     authors: Array.isArray(snap.authors) ? snap.authors : [],
@@ -539,7 +748,7 @@ async function restoreRevision(env, user, id, revisionId) {
 
   const data = {
     slug: r.slug || article.slug, title: r.title || 'Untitled', subheading: r.subheading ?? null,
-    category: r.category === 'news' ? 'news' : 'blog',
+    category: r.category || 'blog',
     publish_date: r.publish_date ?? null, cover: r.cover ?? null,
     hero_surface: r.hero_surface ?? '',
     authors: Array.isArray(r.authors) ? r.authors : [],

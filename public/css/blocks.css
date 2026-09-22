@@ -422,6 +422,23 @@
 .gal-nav:hover { background: var(--c-panel, var(--color-surface)); }
 @media (max-width: 600px) { .gal-nav { display: none; } }
 
+/* Grid variant (article galleries can pick grid over the carousel): the track
+   becomes a wrapping grid of square-ish tiles and the scroll arrows are hidden.
+   The shared lightbox still opens on click via the gallery island. */
+.gallery-grid { display: block; }
+.gallery-grid .gal-nav { display: none; }
+.gallery-grid .gal-track {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.6rem;
+  overflow: visible;
+  padding: 0;
+}
+.gallery-grid .gal-item { width: auto; aspect-ratio: 1 / 1; }
+@media (max-width: 480px) {
+  .gallery-grid .gal-track { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}
+
 /* Lightbox (appended to <body> by the gallery island). */
 .gal-lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
 .gal-lightbox[hidden] { display: none; }

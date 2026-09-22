@@ -118,6 +118,37 @@ main { flex: 1; }
 }
 .theme-toggle:hover { background: var(--c-panel, var(--color-surface)); }
 
+/* Header search icon — matches the theme toggle's pill button. */
+.site-search-link {
+  border: 1px solid var(--c-hairline, var(--color-surface-dark));
+  color: var(--c-text, var(--color-ink));
+  border-radius: var(--radius-pill);
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.site-search-link:hover { background: var(--c-panel, var(--color-surface)); color: var(--color-brand); text-decoration: none; }
+.site-search-link svg { display: block; }
+
+/* Search page */
+.search-form { display: flex; gap: 0.6rem; margin: 1rem 0 1.6rem; max-width: 520px; }
+.search-form input[type="search"] {
+  flex: 1; min-width: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg); color: var(--color-ink);
+  font-size: 1rem;
+}
+.search-count { margin-top: 0; }
+.search-results { display: flex; flex-direction: column; gap: 1.4rem; }
+.search-result h3 { margin: 0 0 0.3rem; }
+.search-snippet { margin: 0.4rem 0 0; color: var(--color-muted); }
+.search-result mark, .search-result h3 mark {
+  background: var(--color-brand-soft, rgba(124, 92, 255, 0.22));
+  color: inherit; padding: 0 0.1em; border-radius: 3px;
+}
+
 /* Nav dropdowns: a .nav-drop wraps the toggle + its .nav-drop-menu. Desktop
    opens on hover/focus-within or a JS-set .open (touch); on mobile the menu
    renders inline inside the hamburger panel. */

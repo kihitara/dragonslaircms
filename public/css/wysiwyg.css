@@ -80,6 +80,16 @@
 [data-theme="dark"] .rt-dlg-rem { border-color: #6E322B; color: #F2B8B1; }
 [data-theme="dark"] .rt-dlg-rem:hover { background: #3A1D1A; }
 
+/* Gallery builder (caption sheet): one row per image, thumbnail + alt/caption. */
+.rt-gal-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 320px; overflow-y: auto; }
+.rt-gal-item { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.4rem; border: 1px solid var(--color-surface-dark); border-radius: var(--radius-sm); background: var(--color-bg); }
+.rt-gal-th { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius-sm); flex: 0 0 auto; background: var(--color-surface-dark); }
+.rt-gal-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.rt-gal-fields input { width: 100%; padding: 0.3rem 0.45rem; border: 1px solid var(--color-surface-dark); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-ink); font: inherit; font-size: 0.85rem; }
+.rt-gal-ctrls { display: flex; flex-direction: column; gap: 0.2rem; flex: 0 0 auto; }
+.rt-gal-ctrls button { width: 1.8rem; height: 1.8rem; border: 1px solid var(--color-surface-dark); background: var(--color-surface); color: var(--color-ink); border-radius: var(--radius-sm); cursor: pointer; font: inherit; }
+.rt-gal-ctrls button:disabled { opacity: 0.4; cursor: default; }
+
 /* Named anchor marker: an empty <a id class="rt-anchor"> is invisible on the
    live site, so give it a visible chip in the editor — anchor glyph + the id —
    that can be clicked to edit or remove. */

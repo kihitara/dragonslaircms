@@ -136,11 +136,60 @@ CREATE TABLE IF NOT EXISTS articles (
   --   ALTER TABLE articles ADD COLUMN hero_surface TEXT NOT NULL DEFAULT '';
   --   ALTER TABLE articles ADD COLUMN corrections_disabled INTEGER NOT NULL DEFAULT 0;
   published_snapshot TEXT,
+  -- Scheduled publishing: an ISO-UTC datetime. A 'draft' with scheduled_for set
+  -- is hidden until the cron (scheduled handler) publishes it once the time
+  -- passes; publishing clears it.
+  scheduled_for      TEXT,
+  -- Migration (pre-existing databases):
+  --   ALTER TABLE articles ADD COLUMN scheduled_for TEXT;
   created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_articles_status  ON articles(status);
 CREATE INDEX IF NOT EXISTS idx_articles_publish ON articles(publish_date DESC);
+CREATE INDEX IF NOT EXISTS idx_articles_scheduled ON articles(scheduled_for);
+
+-- ── Categories (articles) ────────────────────────────────────────────────────
+-- A managed label for articles. Each article stores one category slug in
+-- articles.category; the category's public listing lives at /category/<slug>.
+-- 'blog' and 'news' are seeded so articles migrated from the old two-prefix
+-- scheme (/blog, /news) keep a category. Deleting a category leaves an
+-- article's stored slug intact (the /category page just 404s), like tags.
+
+CREATE TABLE IF NOT EXISTS categories (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug        TEXT NOT NULL UNIQUE,
+  title       TEXT NOT NULL,
+  description TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Seed the two built-in categories (idempotent; safe to re-run with db:schema).
+INSERT OR IGNORE INTO categories (slug, title, sort_order) VALUES ('blog', 'Blog', 0), ('news', 'News', 1);
+
+-- ── Series / trips (articles) ────────────────────────────────────────────────
+-- An ordered collection of articles (a trip read front-to-back). An article can
+-- belong to several series, each with its own position, via article_series.
+-- Series membership is live-relational (not frozen in published_snapshot), so
+-- re-ordering a trip takes effect immediately. Public index at /series/<slug>.
+
+CREATE TABLE IF NOT EXISTS series (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug        TEXT NOT NULL UNIQUE,
+  title       TEXT NOT NULL,
+  description TEXT,
+  cover       TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS article_series (
+  article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  series_id  INTEGER NOT NULL REFERENCES series(id)   ON DELETE CASCADE,
+  position   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (article_id, series_id)
+);
+CREATE INDEX IF NOT EXISTS idx_article_series_series ON article_series(series_id, position);
 
 -- ── Tags (articles) ─────────────────────────────────────────────────────────
 

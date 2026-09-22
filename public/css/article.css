@@ -1,4 +1,4 @@
-/* Article page hero — loaded only on /blog/:slug and /news/:slug (via
+/* Article page hero — loaded only on /posts/:slug (via
    extraHead in public-articles.js). Structure only: every colour comes from
    the palette surface applied to the hero (.surface-<key> sets the --c-*
    variables in /theme.css), so the band recolours with the chosen palette.
@@ -104,3 +104,37 @@
 article.section .prose { max-width: none; }
 article.section .community-block,
 article.section .comments { max-width: none; }
+
+/* Series ("trip") navigation box beneath an article body: shows this post's
+   place in the series and links to the previous/next parts. Colours come from
+   the site tokens (not the hero surface). */
+.series-box {
+  margin: 2rem 0 0;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.series-box-label { margin: 0; font-weight: 600; }
+.series-box-label a { color: inherit; }
+.series-box-nav {
+  display: flex;
+  gap: 0.8rem;
+  margin-top: 0.8rem;
+  flex-wrap: wrap;
+}
+.series-nav-link {
+  flex: 1 1 45%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-surface-dark);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  text-decoration: none;
+}
+.series-next { text-align: right; align-items: flex-end; }
+.series-nav-dir { font-size: 0.78rem; color: var(--color-muted); }
+.series-nav-title { font-weight: 600; }

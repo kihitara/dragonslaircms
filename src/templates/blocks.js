@@ -522,7 +522,7 @@ document.querySelectorAll('[data-tabs]').forEach(function (root) {
 // carousel prev/next scroll and a shared lightbox (open on item click, prev/
 // next, Esc, arrows, backdrop/close). Items are links, so no-JS clicks still
 // open the file. Caption HTML is authored by trusted CMS users (rendered raw).
-const GALLERY_SCRIPT = `<script>
+export const GALLERY_SCRIPT = `<script>
 (function () {
   var galleries = document.querySelectorAll('[data-gallery]');
   if (!galleries.length) return;

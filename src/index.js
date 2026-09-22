@@ -7,11 +7,14 @@ import { handleAdmin } from './routes/admin.js';
 import { handleApi } from './routes/api.js';
 import { handleReader } from './routes/reader.js';
 import { handleMediaFile } from './routes/media.js';
+import { handleDiscovery } from './routes/discovery.js';
 import { handlePublicArticles } from './routes/public-articles.js';
+import { publishScheduledArticles } from './routes/admin-articles.js';
 import { handlePublicPeople } from './routes/public-people.js';
 import { handlePublicPage } from './routes/public-pages.js';
+import { handleSearch } from './routes/search.js';
 import { defaultTokens, tokensToCss, surfacesToCss, fontFacesToCss } from './tokens.js';
-import { getThemeTokens, getSiteConfig } from './db.js';
+import { getThemeTokens, getSiteConfig, getSiteSettings } from './db.js';
 import { loadChrome } from './site.js';
 import { sitePage, escapeHtml, html } from './templates/base.js';
 
@@ -28,23 +31,51 @@ export default {
       // (the admin list endpoint is behind auth).
       if (path === '/emoticons.json') return emoticonsJson(env);
 
+      // Resolve the admin-settable site URL / email-from once per request and
+      // hand every handler a copy of env carrying the effective values, so the
+      // wrangler.jsonc vars become fallbacks rather than the only source.
+      const renv = await resolveEnv(env);
+
       if (path === '/admin' || path.startsWith('/admin/')) {
-        return await handleAdmin(request, env, url);
+        return await handleAdmin(request, renv, url);
       }
 
-      const candidates = [handleApi, handleReader, handleMediaFile, handlePublicArticles, handlePublicPeople, handlePublicPage];
+      const candidates = [handleDiscovery, handleApi, handleReader, handleMediaFile, handleSearch, handlePublicArticles, handlePublicPeople, handlePublicPage];
       for (const handler of candidates) {
-        const res = await handler(request, env, url);
+        const res = await handler(request, renv, url);
         if (res) return res;
       }
 
-      return await notFound(request, env, url);
+      return await notFound(request, renv, url);
     } catch (err) {
       console.error('Unhandled error:', err.stack || err);
       return html('<h1>Something went wrong</h1><p>Please try again shortly.</p>', { status: 500 });
     }
   },
+
+  // Cron Trigger (see triggers.crons in wrangler.jsonc): publish any articles
+  // whose scheduled time has passed. Free-plan compatible.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      resolveEnv(env)
+        .then((renv) => publishScheduledArticles(renv))
+        .then((n) => { if (n) console.log('[schedule] published', n, 'article(s)'); })
+        .catch((err) => console.error('[schedule] run failed:', err?.stack || err))
+    );
+  },
 };
+
+// Effective env: overlay the admin-settable site_url / email_from (site_settings)
+// onto the wrangler vars, which act as fallbacks. Returns a per-request copy so
+// the shared env object is never mutated (no cross-request bleed). SITE_URL is
+// stripped of any trailing slash so `${SITE_URL}/path` never doubles up.
+async function resolveEnv(env) {
+  let s = {};
+  try { s = await getSiteSettings(env.DB); } catch { s = {}; }
+  const siteUrl = ((s.site_url || '').trim() || env.SITE_URL || '').replace(/\/+$/, '');
+  const emailFrom = (s.email_from || '').trim() || env.SITE_EMAIL_FROM;
+  return { ...env, SITE_URL: siteUrl, SITE_EMAIL_FROM: emailFrom };
+}
 
 async function themeCss(env) {
   const tokens = await getThemeTokens(env.DB, defaultTokens);

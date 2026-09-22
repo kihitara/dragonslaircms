@@ -11,6 +11,7 @@ import { sitePage, html } from '../templates/base.js';
 import { loadChrome } from '../site.js';
 import { renderPageBlocksContent } from './public-pages.js';
 import { renderArticleContent, loadLookups } from './public-articles.js';
+import { GALLERY_SCRIPT } from '../templates/blocks.js';
 
 const NOINDEX = '<meta name="robots" content="noindex">';
 
@@ -69,7 +70,7 @@ export async function previewArticle(request, env, url) {
     slug: 'preview',
     title: String(form.get('title') || 'Untitled'),
     subheading: String(form.get('subheading') || ''),
-    category: form.get('category') === 'news' ? 'news' : 'blog',
+    category: String(form.get('category') || 'blog').toLowerCase().replace(/[^a-z0-9-]/g, '') || 'blog',
     publish_date: String(form.get('publish_date') || ''),
     cover: String(form.get('cover') || ''),
     hero_surface: String(form.get('hero_surface') || '').toLowerCase().replace(/[^a-z0-9_-]/g, ''),
@@ -84,7 +85,10 @@ export async function previewArticle(request, env, url) {
 
   const lookups = await loadLookups(env.DB);
   const { settings, navItems, footer, reader } = await loadChrome(env, url, request);
-  const content = renderArticleContent(view, lookups, '');
+  const gallery = /data-gallery/.test(view.content);
+  // The lightbox island must run after the markup → append to content, not head.
+  const content = renderArticleContent(view, lookups, '') + (gallery ? GALLERY_SCRIPT : '');
+  const galleryHead = gallery ? '<link rel="stylesheet" href="/css/blocks.css">' : '';
 
   return html(sitePage({
     env,
@@ -93,6 +97,6 @@ export async function previewArticle(request, env, url) {
     shareImage: view.share_image || view.cover || '',
     nav: navItems, footer, siteSettings: settings, reader,
     content,
-    extraHead: `<link rel="stylesheet" href="/css/article.css">${NOINDEX}`,
+    extraHead: `<link rel="stylesheet" href="/css/article.css">${galleryHead}${NOINDEX}`,
   }));
 }

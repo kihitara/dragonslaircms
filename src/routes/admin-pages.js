@@ -34,6 +34,9 @@ export async function handlePages(request, env, url, user) {
   if ((m = path.match(/^\/admin\/pages\/(\d+)\/publish$/)) && method === 'POST') {
     return publishPage(request, env, user, parseInt(m[1], 10));
   }
+  if ((m = path.match(/^\/admin\/pages\/(\d+)\/unpublish$/)) && method === 'POST') {
+    return unpublishPage(env, user, parseInt(m[1], 10));
+  }
   if ((m = path.match(/^\/admin\/pages\/(\d+)\/revert$/)) && method === 'POST') {
     return revertToPublished(env, user, parseInt(m[1], 10));
   }
@@ -180,6 +183,21 @@ async function publishPage(request, env, user, id) {
   return redirect(`/admin/pages/${id}?m=published`);
 }
 
+// Take a live page offline: return it to 'draft' so it drops off the site,
+// keeping its blocks, published_snapshot and revisions. Re-publishing later
+// snapshots the current working copy as usual.
+async function unpublishPage(env, user, id) {
+  if (!roleAtLeast(user, 'publisher')) return redirect(`/admin/pages/${id}?err=` + encodeURIComponent('Unpublishing requires the publisher role.'));
+  const pg = await getPage(env.DB, id);
+  if (!pg) return redirect('/admin/pages?err=' + encodeURIComponent('Page not found.'));
+  if (pg.status === 'draft') return redirect(`/admin/pages/${id}`);
+  await env.DB.prepare(
+    "UPDATE pages SET status = 'draft', updated_at = datetime('now') WHERE id = ?"
+  ).bind(id).run();
+  await logActivity(env.DB, user, 'unpublished', 'page', pg.title || pg.slug);
+  return redirect(`/admin/pages/${id}?m=unpublished`);
+}
+
 // Discard unpublished edits: copy the published snapshot back over the working
 // fields and return to 'published'. Only meaningful for 'modified' pages.
 async function revertToPublished(env, user, id) {
@@ -239,6 +257,7 @@ const MESSAGES = {
   published: 'Published — the page is live.',
   reverted: 'Reverted to the published version. Unpublished edits were discarded.',
   restored: 'Version restored as the working copy. Publish to push it live.',
+  unpublished: 'Taken offline — the page is back to draft and no longer on the site. Blocks and history are kept; press Publish to put it back.',
   deleted: 'Page deleted.',
 };
 
@@ -293,7 +312,8 @@ async function pagesList(env, user, url) {
 }
 
 // Inject live select options into a (cloned) manifest: the Articles block's
-// "featured" picker gets the current published-article list.
+// "featured" picker gets the current published-article list, and its "category"
+// filter gets the managed category list.
 async function manifestFor(env) {
   const m = structuredClone(BLOCK_MANIFEST);
   try {
@@ -305,6 +325,15 @@ async function manifestFor(env) {
     const f = (m.articles.fields || []).find((x) => x.key === 'featured');
     if (f) f.options = opts;
   } catch { /* articles table may not be migrated yet — keep the fallback */ }
+  try {
+    const { results } = await env.DB.prepare(
+      'SELECT slug, title FROM categories ORDER BY sort_order, title'
+    ).all();
+    const opts = [{ value: 'all', label: 'All categories' }]
+      .concat((results || []).map((c) => ({ value: c.slug, label: c.title })));
+    const f = (m.articles.fields || []).find((x) => x.key === 'category');
+    if (f) f.options = opts;
+  } catch { /* categories table may not be migrated yet — keep the fallback */ }
   return m;
 }
 
@@ -385,6 +414,9 @@ async function pageForm(env, user, pg, url) {
   const revertBtn = !isNew && canPublish && status === 'modified' && pg.published_snapshot
     ? `<button class="btn btn-secondary" type="submit" formaction="/admin/pages/${pg.id}/revert" formmethod="POST"
          data-confirm="Discard unpublished edits and revert to the published version?" data-confirm-ok="Revert">Revert to published</button>` : '';
+  const unpublishBtn = !isNew && canPublish && status !== 'draft'
+    ? `<button class="btn btn-secondary" type="submit" formaction="/admin/pages/${pg.id}/unpublish" formmethod="POST" formnovalidate style="width:100%;justify-content:center"
+         data-confirm="Take this page offline? It returns to draft and disappears from the site. Blocks and history are kept — you can publish it again anytime." data-confirm-ok="Take offline">Unpublish</button>` : '';
 
   const revisions = isNew ? [] : await getRevisions(env.DB, 'page', pg.id);
   const revisionRows = revisions.map((r, i) => `
@@ -480,6 +512,7 @@ async function pageForm(env, user, pg, url) {
             <button class="btn" type="submit" style="width:100%;justify-content:center">Save</button>
             ${publishBtn ? `<div style="margin-top:0.6rem">${publishBtn.replace('class="btn btn-green"', 'class="btn btn-green" style="width:100%;justify-content:center"')}</div>` : ''}
             ${revertBtn ? `<div style="margin-top:0.6rem">${revertBtn}</div>` : ''}
+            ${unpublishBtn ? `<div style="margin-top:0.6rem">${unpublishBtn}</div>` : ''}
             <div style="margin-top:0.8rem"><a class="muted small" href="/admin/pages">← Back to pages</a></div>
           </div>
         </div>

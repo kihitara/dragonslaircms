@@ -14,6 +14,8 @@ import { adminPage, adminLoginPage, adminForgotPage, adminResetPage, adminSetupP
 import { handlePages } from './admin-pages.js';
 import { handleArticles } from './admin-articles.js';
 import { handleTags } from './admin-tags.js';
+import { handleCategories } from './admin-categories.js';
+import { handleSeries } from './admin-series.js';
 import { handlePeople } from './admin-people.js';
 import { handleMedia } from './admin-media.js';
 import { handleUsers } from './admin-users.js';
@@ -30,6 +32,8 @@ import { handleEmoticons } from './admin-emoticons.js';
 const SECTIONS = {
   pages: handlePages,
   articles: handleArticles,
+  categories: handleCategories,
+  series: handleSeries,
   tags: handleTags,
   people: handlePeople,
   media: handleMedia,

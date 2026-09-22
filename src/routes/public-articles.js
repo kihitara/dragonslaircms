@@ -1,5 +1,6 @@
-// Public article routes: /blog, /news (paginated listings), /blog/:slug,
-// /news/:slug (article pages) and /tags/:slug (tag listings).
+// Public article routes: /posts (all posts), /posts/:slug (article page),
+// /category/:slug (category listing) and /tags/:slug (tag listing). The old
+// two-prefix scheme (/blog, /news, /blog/:slug, /news/:slug) 301-redirects here.
 //
 // Everything renders from published_snapshot — the version frozen at Publish —
 // so in-progress edits ('modified' status) never leak. Articles published
@@ -9,22 +10,65 @@
 import { sitePage, escapeHtml, escapeAttr, formatDate, html } from '../templates/base.js';
 import { loadChrome } from '../site.js';
 import { renderArticleCommunity } from '../community.js';
+import { GALLERY_SCRIPT } from '../templates/blocks.js';
+
+// Article bodies can embed a gallery (WYSIWYG). When present, the article page
+// pulls in the shared gallery styles (head) plus the lightbox/carousel island,
+// which must run AFTER the markup — so it is appended to the content, exactly
+// like renderBlocks does for page Gallery blocks, not placed in <head>.
+const ARTICLE_HEAD = '<link rel="stylesheet" href="/css/article.css">';
+function hasGallery(contentHtml) { return /data-gallery/.test(contentHtml || ''); }
+function articleExtraHead(contentHtml) {
+  return hasGallery(contentHtml) ? `${ARTICLE_HEAD}<link rel="stylesheet" href="/css/blocks.css">` : ARTICLE_HEAD;
+}
 
 const PER_PAGE = 9;
+
+// Permanent redirect that short-circuits the handler chain (a real Response,
+// not null, so index.js stops here rather than falling through to pages).
+function redirectPermanent(location) {
+  return new Response(null, { status: 301, headers: { Location: location } });
+}
 
 export async function handlePublicArticles(request, env, url) {
   if (request.method !== 'GET') return null;
   const path = url.pathname.replace(/\/$/, '') || '/';
 
-  if (path === '/blog' || path === '/news') return listingPage(request, env, url, path.slice(1));
-
+  // Legacy permalinks → the new flat scheme (keeps indexed URLs alive).
   let m = path.match(/^\/(blog|news)\/([a-z0-9-]+)$/);
-  if (m) return articlePage(request, env, url, m[1], m[2]);
+  if (m) return redirectPermanent(`/posts/${m[2]}`);
+  if (path === '/blog') return redirectPermanent('/category/blog');
+  if (path === '/news') return redirectPermanent('/category/news');
+
+  if (path === '/posts') return allPostsPage(request, env, url);
+
+  m = path.match(/^\/posts\/([a-z0-9-]+)$/);
+  if (m) return articlePage(request, env, url, m[1]);
+
+  m = path.match(/^\/category\/([a-z0-9-]+)$/);
+  if (m) return categoryPage(request, env, url, m[1]);
+
+  if (path === '/series') return seriesIndexPage(request, env, url);
+
+  m = path.match(/^\/series\/([a-z0-9-]+)$/);
+  if (m) return seriesPage(request, env, url, m[1]);
 
   m = path.match(/^\/tags\/([a-z0-9-]+)$/);
   if (m) return tagPage(request, env, url, m[1]);
 
   return null;
+}
+
+// Published articles as resolved views (snapshot-correct fields, tags as slugs),
+// newest first, across all categories. Shared with the feed and sitemap so they
+// use the exact same "what's live" logic as the listing pages. limit 0 = all.
+export async function listPublishedArticles(env, limit = 0) {
+  const base = `SELECT * FROM articles WHERE status IN ('published', 'modified') ORDER BY publish_date DESC, id DESC`;
+  const stmt = limit ? env.DB.prepare(base + ' LIMIT ?').bind(limit) : env.DB.prepare(base);
+  const { results } = await stmt.all();
+  const views = (results || []).map(liveView).filter(Boolean);
+  await resolveTags(env.DB, views);
+  return views;
 }
 
 // ── View resolution ──────────────────────────────────────────────────────────
@@ -59,7 +103,7 @@ function liveView(row) {
       slug: s.slug || row.slug,
       title: s.title || row.title,
       subheading: s.subheading || '',
-      category: s.category === 'news' ? 'news' : 'blog',
+      category: s.category || row.category || '',
       publish_date: s.publish_date || row.publish_date,
       cover: s.cover || '',
       hero_surface: s.hero_surface || '', // pre-hero snapshots → '' (site default)
@@ -77,7 +121,7 @@ function liveView(row) {
     slug: row.slug,
     title: row.title,
     subheading: row.subheading || '',
-    category: row.category === 'news' ? 'news' : 'blog',
+    category: row.category || '',
     publish_date: row.publish_date,
     cover: row.cover || '',
     hero_surface: row.hero_surface || '',
@@ -95,10 +139,14 @@ function liveView(row) {
 export async function loadLookups(DB) {
   const people = (await DB.prepare('SELECT slug, name, photo_url FROM people').all()).results || [];
   const tags = (await DB.prepare('SELECT slug, title FROM tags').all()).results || [];
+  // categories may not exist on an un-migrated database → treat as none.
+  let categories = [];
+  try { categories = (await DB.prepare('SELECT slug, title FROM categories').all()).results || []; } catch { /* no table yet */ }
   return {
     personName: Object.fromEntries(people.map((p) => [p.slug, p.name])),
     personPhoto: Object.fromEntries(people.map((p) => [p.slug, p.photo_url || ''])),
     tagTitle: Object.fromEntries(tags.map((t) => [t.slug, t.title])),
+    categoryTitle: Object.fromEntries(categories.map((c) => [c.slug, c.title])),
   };
 }
 
@@ -124,7 +172,7 @@ function tagBadges(tags, lookups) {
 }
 
 function card(view, lookups) {
-  const href = `/${view.category}/${escapeAttr(view.slug)}`;
+  const href = `/posts/${escapeAttr(view.slug)}`;
   const names = view.authors.map((slug) => lookups.personName[slug]).filter(Boolean);
   return `
     <article class="card article-card">
@@ -167,40 +215,165 @@ function cardsSection(heading, introHtml, cards, pagination) {
     </section>`;
 }
 
-// ── Category listings: /blog, /news ─────────────────────────────────────────
+// ── Listings ─────────────────────────────────────────────────────────────────
 
-async function listingPage(request, env, url, category) {
+// Shared renderer for a paginated card grid (all posts, a category, or a tag):
+// resolves the rows to views, loads chrome, and wraps them in a sitePage.
+async function renderListing(request, env, url, { rows, total, page, heading, introHtml = '', basePath, canonical, description = '' }) {
+  const views = (rows || []).map(liveView).filter(Boolean);
+  await resolveTags(env.DB, views);
+  const lookups = await loadLookups(env.DB);
+  const { settings, navItems, footer, reader } = await loadChrome(env, url, request);
+  const pages = Math.max(1, Math.ceil(total / PER_PAGE));
+  const content = cardsSection(heading, introHtml, views.map((v) => card(v, lookups)), paginationHtml(basePath, page, pages));
+  return html(sitePage({
+    env, title: heading, description,
+    canonical, nav: navItems, footer, siteSettings: settings, reader, content,
+  }));
+}
+
+// /posts — every published article, newest first.
+async function allPostsPage(request, env, url) {
   const DB = env.DB;
   const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
+  const total = (await DB.prepare(
+    `SELECT COUNT(*) n FROM articles WHERE status IN ('published', 'modified')`
+  ).first())?.n ?? 0;
+  const { results } = await DB.prepare(
+    `SELECT * FROM articles WHERE status IN ('published', 'modified')
+     ORDER BY publish_date DESC, id DESC LIMIT ? OFFSET ?`
+  ).bind(PER_PAGE, (page - 1) * PER_PAGE).all();
 
+  return renderListing(request, env, url, {
+    rows: results, total, page, heading: 'Posts',
+    basePath: '/posts', canonical: `${env.SITE_URL}/posts`,
+  });
+}
+
+// /category/:slug — one category's posts. Unknown slug → null so the request
+// falls through to the page router (a page could own that path).
+async function categoryPage(request, env, url, slug) {
+  const DB = env.DB;
+  let cat;
+  try { cat = await DB.prepare('SELECT * FROM categories WHERE slug = ?').bind(slug).first(); }
+  catch { cat = null; } // categories table absent (un-migrated) → not a category
+  if (!cat) return null;
+
+  const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
   const total = (await DB.prepare(
     `SELECT COUNT(*) n FROM articles WHERE category = ? AND status IN ('published', 'modified')`
-  ).bind(category).first())?.n ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PER_PAGE));
-
+  ).bind(slug).first())?.n ?? 0;
   const { results } = await DB.prepare(
     `SELECT * FROM articles WHERE category = ? AND status IN ('published', 'modified')
      ORDER BY publish_date DESC, id DESC LIMIT ? OFFSET ?`
-  ).bind(category, PER_PAGE, (page - 1) * PER_PAGE).all();
+  ).bind(slug, PER_PAGE, (page - 1) * PER_PAGE).all();
 
-  const views = (results || []).map(liveView).filter(Boolean);
-  await resolveTags(DB, views);
-  const lookups = await loadLookups(DB);
+  return renderListing(request, env, url, {
+    rows: results, total, page, heading: cat.title,
+    introHtml: cat.description ? `<div class="prose" style="margin-bottom:1.6rem">${cat.description}</div>` : '',
+    description: stripTags(cat.description),
+    basePath: `/category/${escapeAttr(slug)}`, canonical: `${env.SITE_URL}/category/${cat.slug}`,
+  });
+}
+
+// ── Series: /series (index), /series/:slug (ordered trip) ────────────────────
+
+// Published members of a series in reading order (position, then date).
+async function seriesMembers(DB, seriesId) {
+  const { results } = await DB.prepare(
+    `SELECT a.* FROM articles a
+     JOIN article_series asx ON asx.article_id = a.id
+     WHERE asx.series_id = ? AND a.status IN ('published', 'modified')
+     ORDER BY asx.position, a.publish_date, a.id`
+  ).bind(seriesId).all();
+  return results || [];
+}
+
+// /series — a directory of series that have at least one published article.
+async function seriesIndexPage(request, env, url) {
+  const DB = env.DB;
+  let list = [];
+  try {
+    ({ results: list } = await DB.prepare(
+      `SELECT s.*, (SELECT COUNT(*) FROM article_series asx JOIN articles a ON a.id = asx.article_id
+                    WHERE asx.series_id = s.id AND a.status IN ('published', 'modified')) AS n
+       FROM series s ORDER BY s.sort_order, s.title`
+    ).all());
+  } catch { return null; } // series table absent → fall through
+  const withPosts = (list || []).filter((s) => s.n > 0);
   const { settings, navItems, footer, reader } = await loadChrome(env, url, request);
-
-  const heading = category === 'news' ? 'News' : 'Blog';
-  const content = cardsSection(heading, '', views.map((v) => card(v, lookups)), paginationHtml(`/${category}`, page, pages));
-
+  const cards = withPosts.map((s) => `
+    <article class="card">
+      ${s.cover ? `<a href="/series/${escapeAttr(s.slug)}"><img class="cover" src="${escapeAttr(s.cover)}" alt="" loading="lazy"></a>` : ''}
+      <h3><a href="/series/${escapeAttr(s.slug)}">${escapeHtml(s.title)}</a></h3>
+      <div class="article-meta"><span>${s.n} part${s.n === 1 ? '' : 's'}</span></div>
+    </article>`);
+  const content = cardsSection('Series', '', cards, '');
   return html(sitePage({
-    env, title: heading, canonical: `${env.SITE_URL}/${category}`,
+    env, title: 'Series', canonical: `${env.SITE_URL}/series`,
     nav: navItems, footer, siteSettings: settings, reader, content,
   }));
 }
 
+// /series/:slug — the trip's published posts in reading order (no pagination;
+// trips are short and the sequence matters more than paging).
+async function seriesPage(request, env, url, slug) {
+  const DB = env.DB;
+  let s;
+  try { s = await DB.prepare('SELECT * FROM series WHERE slug = ?').bind(slug).first(); }
+  catch { s = null; } // series table absent → not a series
+  if (!s) return null;
+
+  const rows = await seriesMembers(DB, s.id);
+  const views = rows.map(liveView).filter(Boolean);
+  await resolveTags(DB, views);
+  const lookups = await loadLookups(DB);
+  const { settings, navItems, footer, reader } = await loadChrome(env, url, request);
+  const intro = s.description ? `<div class="prose" style="margin-bottom:1.6rem">${s.description}</div>` : '';
+  const content = cardsSection(s.title, intro, views.map((v) => card(v, lookups)), '');
+  return html(sitePage({
+    env, title: s.title, description: stripTags(s.description),
+    canonical: `${env.SITE_URL}/series/${s.slug}`,
+    nav: navItems, footer, siteSettings: settings, reader, content,
+  }));
+}
+
+// Series navigation for one article: for each series it belongs to, its position
+// among the published members and prev/next links. Returns '' when in none.
+async function seriesNavForArticle(DB, articleId) {
+  let memberships = [];
+  try {
+    ({ results: memberships } = await DB.prepare(
+      `SELECT s.id, s.slug, s.title FROM article_series asx
+       JOIN series s ON s.id = asx.series_id
+       WHERE asx.article_id = ? ORDER BY asx.position, s.title`
+    ).bind(articleId).all());
+  } catch { return ''; }
+  const boxes = [];
+  for (const s of memberships || []) {
+    const members = await seriesMembers(DB, s.id);
+    const idx = members.findIndex((a) => a.id === articleId);
+    if (idx === -1) continue; // current article not a published member
+    const prev = members[idx - 1];
+    const next = members[idx + 1];
+    const nav = [
+      prev ? `<a class="series-nav-link series-prev" href="/posts/${escapeAttr(prev.slug)}"><span class="series-nav-dir">‹ Previous</span><span class="series-nav-title">${escapeHtml(prev.title)}</span></a>` : '',
+      next ? `<a class="series-nav-link series-next" href="/posts/${escapeAttr(next.slug)}"><span class="series-nav-dir">Next ›</span><span class="series-nav-title">${escapeHtml(next.title)}</span></a>` : '',
+    ].filter(Boolean).join('');
+    boxes.push(`
+      <aside class="series-box">
+        <p class="series-box-label">Part ${idx + 1} of ${members.length} in <a href="/series/${escapeAttr(s.slug)}">${escapeHtml(s.title)}</a></p>
+        ${nav ? `<nav class="series-box-nav">${nav}</nav>` : ''}
+      </aside>`);
+  }
+  return boxes.join('');
+}
+
 // Build the article hero + body content from a resolved view. Shared by the
 // live article page and the admin preview so both render identically. The
-// caller supplies communityHtml ('' for previews, which have no comments).
-export function renderArticleContent(view, lookups, communityHtml = '') {
+// caller supplies communityHtml ('' for previews, which have no comments) and
+// seriesHtml (prev/next series boxes, '' for previews).
+export function renderArticleContent(view, lookups, communityHtml = '', seriesHtml = '') {
   const personLink = (pslug) => lookups.personName[pslug]
     ? `<a href="/people/${escapeAttr(pslug)}">${escapeHtml(lookups.personName[pslug])}</a>`
     : '';
@@ -228,12 +401,19 @@ export function renderArticleContent(view, lookups, communityHtml = '') {
     tagBadges(view.tags, lookups),
   ].filter(Boolean);
 
+  // Category eyebrow links to the category listing; shows the title when known
+  // (falls back to the raw slug for orphaned categories / admin previews).
+  const catTitle = (lookups.categoryTitle && lookups.categoryTitle[view.category]) || view.category;
+  const eyebrow = view.category
+    ? `<p class="article-hero-eyebrow"><a href="/category/${escapeAttr(view.category)}">${escapeHtml(catTitle)}</a></p>`
+    : '';
+
   const heroHtml = `
     <header class="article-hero surface-${escapeAttr(surfaceKey)}">
       ${view.cover ? `<img class="article-hero-media" src="${escapeAttr(view.cover)}" alt="">` : ''}
       <div class="article-hero-overlay"></div>
       <div class="container article-hero-inner">
-        <p class="article-hero-eyebrow">${escapeHtml(view.category)}</p>
+        ${eyebrow}
         <h1 class="article-hero-title">${escapeHtml(view.title)}</h1>
         ${view.subheading ? `<p class="article-hero-sub">${escapeHtml(view.subheading)}</p>` : ''}
         ${metaBits.length ? `<div class="article-hero-meta">${metaBits.join('')}</div>` : ''}
@@ -247,18 +427,19 @@ export function renderArticleContent(view, lookups, communityHtml = '') {
         <div class="prose">
 ${view.content}
         </div>
+        ${seriesHtml}
         ${communityHtml}
       </div>
     </article>`;
 }
 
-// ── Article page: /blog/:slug, /news/:slug ──────────────────────────────────
+// ── Article page: /posts/:slug ──────────────────────────────────────────────
 
-async function articlePage(request, env, url, category, slug) {
+async function articlePage(request, env, url, slug) {
   const DB = env.DB;
   const row = await DB.prepare('SELECT * FROM articles WHERE slug = ?').bind(slug).first();
   const view = liveView(row);
-  if (!view || view.category !== category) return null; // drafts & wrong category → site 404
+  if (!view) return null; // drafts & unknown slugs → site 404
 
   await resolveTags(DB, [view]);
   const lookups = await loadLookups(DB);
@@ -267,16 +448,18 @@ async function articlePage(request, env, url, category, slug) {
   // Community module owns comments/corrections rendering; it sees
   // comments_disabled on the row and decides what to show.
   const communityHtml = await renderArticleCommunity(request, env, row);
-  const content = renderArticleContent(view, lookups, communityHtml);
+  const seriesHtml = await seriesNavForArticle(DB, row.id);
+  const content = renderArticleContent(view, lookups, communityHtml, seriesHtml)
+    + (hasGallery(view.content) ? GALLERY_SCRIPT : '');
 
   return html(sitePage({
     env,
     title: view.meta_title || view.title,
     description: view.meta_description || view.subheading || '',
     shareImage: view.share_image || view.cover || '',
-    canonical: `${env.SITE_URL}/${category}/${view.slug}`,
+    canonical: `${env.SITE_URL}/posts/${view.slug}`,
     nav: navItems, footer, siteSettings: settings, reader, content,
-    extraHead: '<link rel="stylesheet" href="/css/article.css">',
+    extraHead: articleExtraHead(view.content),
   }));
 }
 

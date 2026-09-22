@@ -48,6 +48,15 @@
     });
   }
 
+  // Galleries are atomic in the editor too: contenteditable="false" so they move/
+  // delete as one unit and a click reopens the gallery builder. clean() strips
+  // the attribute so stored HTML is the plain public markup.
+  function lockGalleries(root) {
+    Array.prototype.slice.call(root.querySelectorAll('.gallery[data-gallery]')).forEach(function (el) {
+      el.setAttribute('contenteditable', 'false');
+    });
+  }
+
   // Emoticon list, fetched ONCE per endpoint per page and shared by every editor
   // instance. Admin editors use /admin/emoticons/list.json (default); comment-
   // mode editors on public/reader pages use the PUBLIC /emoticons.json, which
@@ -81,6 +90,10 @@
     box.innerHTML = html;
     // Callouts are locked (contenteditable=false) while editing — never store that.
     Array.prototype.slice.call(box.querySelectorAll('.rt-callout')).forEach(function (el) {
+      el.removeAttribute('contenteditable');
+    });
+    // Galleries: drop the editor-only contenteditable so stored HTML is public.
+    Array.prototype.slice.call(box.querySelectorAll('.gallery[data-gallery]')).forEach(function (el) {
       el.removeAttribute('contenteditable');
     });
     // Selection-bookmark markers are transient; unwrap any that slipped in (e.g.
@@ -312,6 +325,10 @@
     // endpoint, since these editors render on logged-out/reader pages.
     var mode = ta.getAttribute('data-rt-mode') || '';
     var emoEndpoint = mode === 'comment' ? '/emoticons.json' : '/admin/emoticons/list.json';
+    // Galleries are opt-in per editor (article body only). The site default
+    // layout presets the builder; each gallery can still be switched.
+    var galleryEnabled = ta.hasAttribute('data-gallery');
+    var galleryDefault = ta.getAttribute('data-gallery-default') === 'carousel' ? 'carousel' : 'grid';
 
     var wrap = document.createElement('div'); wrap.className = 'rt';
     var bar = document.createElement('div'); bar.className = 'rt-bar';
@@ -319,6 +336,7 @@
     ed.innerHTML = ta.value || '';
     ensureBlocks(ed);
     lockCallouts(ed);
+    lockGalleries(ed);
 
     ta.parentNode.insertBefore(wrap, ta);
     wrap.appendChild(bar); wrap.appendChild(ed); wrap.appendChild(ta);
@@ -391,7 +409,11 @@
     // grabs them — clicking one reopens the picker to replace it in place.
     ed.addEventListener('click', function (e) {
       var t = e.target; if (!t || !t.closest) return;
-      // Callouts first: they contain an svg/img icon (and, for "other", an
+      // Galleries first: they contain imgs/links that the image/link handlers
+      // below would otherwise grab. Clicking one reopens the gallery builder.
+      var gal = t.closest('.gallery[data-gallery]');
+      if (gal && ed.contains(gal)) { e.preventDefault(); doGallery(gal); return; }
+      // Callouts next: they contain an svg/img icon (and, for "other", an
       // img.rt-emoticon), so this must win before the emoticon/image handlers.
       var co = t.closest('.rt-callout');
       if (co && ed.contains(co)) { e.preventDefault(); doCallout(co); return; }
@@ -578,7 +600,13 @@
       var ins = document.createElement('button'); ins.type = 'button'; ins.className = 'rt-dlg-ins'; ins.textContent = opts.okLabel || 'Insert';
       var can = document.createElement('button'); can.type = 'button'; can.className = 'rt-dlg-can'; can.textContent = 'Cancel';
       ins.addEventListener('click', function () {
-        var vals = {}; Object.keys(inputs).forEach(function (k) { vals[k] = inputs[k].value.trim(); });
+        var vals = {};
+        Object.keys(inputs).forEach(function (k) {
+          vals[k] = inputs[k].value.trim();
+          // The media picker stashes a responsive-variant manifest on the input;
+          // surface it as "<key>Meta" so the image dialog can build a srcset.
+          if (inputs[k].__mediaMeta) vals[k + 'Meta'] = inputs[k].__mediaMeta;
+        });
         closeDlg(); onInsert(vals);
       });
       can.addEventListener('click', function () { closeDlg(); clearMarker(true); sync(); restoreSel(); });
@@ -653,7 +681,15 @@
         { key: 'caption', label: 'Caption', value: capEl ? capEl.textContent : '' },
       ], function (v) {
         if (!v.src) { clearMarker(true); sync(); return; }
-        var html = '<figure><img src="' + escAttr(v.src) + '" alt="' + escAttr(v.alt) + '">' + (v.caption ? '<figcaption>' + escHtml(v.caption) + '</figcaption>' : '') + '</figure>';
+        var attrs = 'src="' + escAttr(v.src) + '" alt="' + escAttr(v.alt) + '" loading="lazy"';
+        // Responsive srcset when the picker uploaded variants for this exact URL.
+        var meta = v.srcMeta;
+        if (meta && meta.src === v.src && meta.variants && meta.variants.length > 1) {
+          var srcset = meta.variants.map(function (x) { return escAttr(x.url) + ' ' + x.w + 'w'; }).join(', ');
+          attrs += ' srcset="' + srcset + '" sizes="(max-width: 760px) 100vw, 720px"';
+          if (meta.width && meta.height) attrs += ' width="' + meta.width + '" height="' + meta.height + '"';
+        }
+        var html = '<figure><img ' + attrs + '>' + (v.caption ? '<figcaption>' + escHtml(v.caption) + '</figcaption>' : '') + '</figure>';
         var old = figure || img;
         if (old && old.parentNode) {
           var box = document.createElement('div'); box.innerHTML = html;
@@ -1024,6 +1060,140 @@
       mini.focus(); miniSave();
     }
 
+    // Gallery builder: a layout choice + a caption sheet of the chosen images
+    // (alt + optional caption, reorder, remove). `existing` = a clicked gallery
+    // to edit in place. Images are added from the media library (multi-select).
+    function isVideoUrl(u) { return /\.(mp4|webm|mov|m4v|ogg)$/i.test(String(u || '')); }
+
+    function galItemHtml(it) {
+      var thumb = it.thumb || it.src;
+      var sizes = it.sizes || '(max-width: 600px) 90vw, 320px';
+      var img = '<img class="gal-thumb" src="' + escAttr(thumb) + '"'
+        + (it.srcset ? ' srcset="' + escAttr(it.srcset) + '" sizes="' + escAttr(sizes) + '"' : '')
+        + ' alt="' + escAttr(it.alt || '') + '" loading="lazy">';
+      var cap = it.caption ? '<div class="gal-cap" hidden>' + escHtml(it.caption) + '</div>' : '';
+      var media = it.media === 'video' ? 'video' : 'image';
+      return '<a class="gal-item" href="' + escAttr(it.src) + '" data-gal-item data-media="' + media + '"'
+        + ' data-src="' + escAttr(it.src) + '" data-cover="' + escAttr(it.cover || '') + '" data-alt="' + escAttr(it.alt || '') + '"'
+        + ' aria-label="' + escAttr(it.alt || (media === 'video' ? 'Play video' : 'View image')) + '">'
+        + img + (media === 'video' ? '<span class="gal-play" aria-hidden="true">▶</span>' : '') + cap + '</a>';
+    }
+    function galleryHtml(layout, items) {
+      var lay = layout === 'carousel' ? 'carousel' : 'grid';
+      return '<div class="gallery gallery-' + lay + '" data-gallery data-layout="' + lay + '">'
+        + '<button type="button" class="gal-nav gal-prev" aria-label="Scroll back">‹</button>'
+        + '<div class="gal-track" data-gal-track>' + items.map(galItemHtml).join('') + '</div>'
+        + '<button type="button" class="gal-nav gal-next" aria-label="Scroll forward">›</button>'
+        + '</div>';
+    }
+
+    function doGallery(existing) {
+      saveSel(); closeDlg();
+      var layout = galleryDefault;
+      var items = [];
+      if (existing) {
+        layout = (/gallery-carousel/.test(existing.className) || existing.getAttribute('data-layout') === 'carousel') ? 'carousel' : 'grid';
+        Array.prototype.slice.call(existing.querySelectorAll('.gal-item')).forEach(function (a) {
+          var img = a.querySelector('img'); var cap = a.querySelector('.gal-cap');
+          items.push({
+            src: a.getAttribute('data-src') || (img && img.getAttribute('src')) || '',
+            thumb: img ? img.getAttribute('src') : '',
+            srcset: img ? (img.getAttribute('srcset') || '') : '',
+            sizes: img ? (img.getAttribute('sizes') || '') : '',
+            alt: a.getAttribute('data-alt') || '',
+            caption: cap ? cap.textContent : '',
+            media: a.getAttribute('data-media') === 'video' ? 'video' : 'image',
+            cover: a.getAttribute('data-cover') || '',
+          });
+        });
+      }
+
+      dlg = document.createElement('div'); dlg.className = 'rt-dlg rt-gal-dlg';
+      var title = document.createElement('p'); title.className = 'rt-dlg-hint';
+      title.textContent = existing ? 'Edit gallery' : 'New gallery';
+      dlg.appendChild(title);
+
+      var lrow = document.createElement('div'); lrow.className = 'rt-dlg-row';
+      var llab = document.createElement('span'); llab.textContent = 'Layout'; lrow.appendChild(llab);
+      var laySel = document.createElement('select');
+      [['grid', 'Grid'], ['carousel', 'Carousel']].forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; laySel.appendChild(op); });
+      laySel.value = layout; lrow.appendChild(laySel);
+      dlg.appendChild(lrow);
+
+      var listEl = document.createElement('div'); listEl.className = 'rt-gal-list';
+      dlg.appendChild(listEl);
+
+      function render() {
+        listEl.innerHTML = '';
+        if (!items.length) {
+          var empty = document.createElement('p'); empty.className = 'rt-dlg-hint'; empty.textContent = 'No images yet — click “Add images”.';
+          listEl.appendChild(empty); return;
+        }
+        items.forEach(function (it, i) {
+          var rowEl = document.createElement('div'); rowEl.className = 'rt-gal-item';
+          var th = document.createElement('img'); th.className = 'rt-gal-th'; th.src = it.thumb || it.src; th.alt = ''; rowEl.appendChild(th);
+          var fields = document.createElement('div'); fields.className = 'rt-gal-fields';
+          var altIn = document.createElement('input'); altIn.type = 'text'; altIn.placeholder = 'Alt text (describe the photo)'; altIn.value = it.alt || '';
+          altIn.addEventListener('input', function () { it.alt = altIn.value; });
+          var capIn = document.createElement('input'); capIn.type = 'text'; capIn.placeholder = 'Caption (optional)'; capIn.value = it.caption || '';
+          capIn.addEventListener('input', function () { it.caption = capIn.value; });
+          fields.appendChild(altIn); fields.appendChild(capIn); rowEl.appendChild(fields);
+          var ctrls = document.createElement('div'); ctrls.className = 'rt-gal-ctrls';
+          function ctrlBtn(lbl, ttl, fn) { var b = document.createElement('button'); b.type = 'button'; b.textContent = lbl; b.title = ttl; b.addEventListener('click', function (e) { e.preventDefault(); fn(); }); return b; }
+          var up = ctrlBtn('↑', 'Move up', function () { var t = items[i - 1]; items[i - 1] = items[i]; items[i] = t; render(); });
+          var dn = ctrlBtn('↓', 'Move down', function () { var t = items[i + 1]; items[i + 1] = items[i]; items[i] = t; render(); });
+          var rm = ctrlBtn('✕', 'Remove', function () { items.splice(i, 1); render(); });
+          up.disabled = i === 0; dn.disabled = i === items.length - 1;
+          ctrls.appendChild(up); ctrls.appendChild(dn); ctrls.appendChild(rm); rowEl.appendChild(ctrls);
+          listEl.appendChild(rowEl);
+        });
+      }
+      render();
+
+      var addRow = document.createElement('div'); addRow.className = 'rt-dlg-row';
+      var addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'btn btn-secondary btn-small'; addBtn.textContent = 'Add images';
+      addBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (!window.MEDIA) return;
+        window.MEDIA.open(function (list) {
+          (list || []).forEach(function (p) {
+            var meta = p.meta;
+            var src = (meta && meta.src) || p.url;
+            var srcset = (meta && meta.variants && meta.variants.length > 1)
+              ? meta.variants.map(function (v) { return v.url + ' ' + v.w + 'w'; }).join(', ') : '';
+            items.push({ src: src, thumb: src, srcset: srcset, sizes: '', alt: '', caption: '', media: isVideoUrl(p.url) ? 'video' : 'image', cover: '' });
+          });
+          render();
+        }, { multiple: true });
+      });
+      addRow.appendChild(addBtn); dlg.appendChild(addRow);
+
+      var act = document.createElement('div'); act.className = 'rt-dlg-actions';
+      var ins = document.createElement('button'); ins.type = 'button'; ins.className = 'btn'; ins.textContent = existing ? 'Save gallery' : 'Insert gallery';
+      var can = document.createElement('button'); can.type = 'button'; can.className = 'btn btn-secondary'; can.textContent = 'Cancel';
+      act.appendChild(ins); act.appendChild(can);
+      if (existing) {
+        var rem = document.createElement('button'); rem.type = 'button'; rem.className = 'rt-dlg-rem'; rem.textContent = 'Delete gallery';
+        rem.addEventListener('click', function () { closeDlg(); if (existing.parentNode) existing.parentNode.removeChild(existing); ed.focus(); saveSel(); sync(); });
+        act.appendChild(rem);
+      }
+      dlg.appendChild(act);
+
+      ins.addEventListener('click', function () {
+        if (!items.length) return;
+        var html = galleryHtml(laySel.value, items);
+        closeDlg();
+        var box = document.createElement('div'); box.innerHTML = html;
+        var el = box.firstChild;
+        el.setAttribute('contenteditable', 'false');
+        if (existing && existing.parentNode) { existing.parentNode.replaceChild(el, existing); ed.focus(); saveSel(); sync(); }
+        else insertBlockEl(el);
+      });
+      can.addEventListener('click', function () { closeDlg(); restoreSel(); });
+      dlg.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDlg(); restoreSel(); } });
+      wrap.appendChild(dlg);
+    }
+
     // Paste choice dialog: the clipboard looked like Markdown and/or carried
     // rich formatting — let the author pick the interpretation before anything
     // is inserted. richHtml is already sanitised; text is the raw plain text.
@@ -1163,6 +1333,7 @@
     mkBtn('❝', 'Blockquote', doQuote);
     mkIcon('code', 'Inline code (monospace)', doCode);
     mkIcon('image', 'Insert image (media library or URL)', function () { doImage(); });
+    if (galleryEnabled) mkBtn('▦', 'Insert an image gallery', function () { doGallery(); }, 'font-size:1.05rem');
     mkBtn('—', 'Horizontal rule', function () { exec('insertHorizontalRule'); });
     sep();
     mkBtn('↶', 'Undo', function () { exec('undo'); });
@@ -1174,7 +1345,7 @@
       if (dlg) { closeDlg(); clearMarker(true); }
       src = !src;
       if (src) { ta.value = clean(ed.innerHTML); ta.style.display = 'block'; ed.style.display = 'none'; tg.classList.add('rt-on'); }
-      else { ed.innerHTML = ta.value; ensureBlocks(ed); lockCallouts(ed); ta.style.display = 'none'; ed.style.display = 'block'; tg.classList.remove('rt-on'); sync(); }
+      else { ed.innerHTML = ta.value; ensureBlocks(ed); lockCallouts(ed); lockGalleries(ed); ta.style.display = 'none'; ed.style.display = 'block'; tg.classList.remove('rt-on'); sync(); }
     });
   }
 

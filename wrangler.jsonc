@@ -1,59 +1,54 @@
 {
+	// The Worker's name. `npm run setup` sets this for you; change it here if you
+	// want a different name (it becomes part of the *.workers.dev URL).
 	"name": "dragonslaircms",
 	"main": "src/index.js",
 	"compatibility_date": "2025-06-01",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
-	// Static assets served from /public - CSS, JS, images
+	// Static assets served from /public — CSS, JS, bundled icons.
 	"assets": {
 		"directory": "./public",
 		"binding": "ASSETS"
 	},
+	// D1 (SQLite) database. No database_id is committed on purpose: the Deploy to
+	// Cloudflare button and `wrangler deploy` (v4.45+) auto-provision the database
+	// and write the id back here, and `npm run setup` creates it explicitly. Only
+	// paste an id yourself if you disabled auto-provisioning.
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "dragonslaircms",
-			// Paste the id printed by `wrangler d1 create dragonslaircms` here.
-			// (If you rename the database, also update database_name above and the
-			//  db:schema scripts in package.json so all three match.)
-			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+			"database_name": "dragonslaircms"
 		}
 	],
+	// R2 bucket for uploaded media — auto-provisioned the same way as the database.
 	"r2_buckets": [
 		{
 			"binding": "MEDIA",
 			"bucket_name": "dragonslaircms"
 		}
 	],
-	// Outgoing email uses Cloudflare's send_email binding, which needs the
-	// Workers Paid plan and a domain set up for Email Routing (a verified
-	// sender). On the Workers FREE plan, or if you don't want email, DELETE this
-	// whole "send_email" block: the CMS then runs in "no-email mode" — in-app
-	// notifications only, sign-up skips email verification, and admins set reader
-	// passwords from Admin > Readers. (You can also just switch it off later in
-	// Admin > Settings without removing the binding.)
+	// Outgoing email (optional). Needs a domain onboarded to Cloudflare Email
+	// Routing (Workers Paid). On the Free plan / no domain, leave this as-is and
+	// turn "Send outgoing email" OFF in Admin → Settings — the CMS then uses
+	// in-app notifications only.
 	"send_email": [
 		{
 			"name": "EMAIL"
 		}
 	],
-	// Site-level settings. SITE_TITLE and SITE_TAGLINE are just fallbacks — once
-	// you log in you can set the site name, tagline, logo, colours, nav and footer
-	// from Admin > Branding/Settings. SITE_URL must be your deployed origin (used
-	// to build absolute links in emails). SITE_EMAIL_FROM must be an address you
-	// have verified as an allowed sender in Cloudflare Email Routing (see below).
-	"vars": {
-		"SITE_TITLE": "My Site",
-		"SITE_TAGLINE": "",
-		"SITE_URL": "https://your-worker.your-subdomain.workers.dev",
-		"SITE_EMAIL_FROM": "My Site <you@example.com>"
+	// Cron Trigger for scheduled publishing (available on the Workers Free plan).
+	// Runs the scheduled() handler in src/index.js — every 15 minutes here.
+	"triggers": {
+		"crons": ["*/15 * * * *"]
 	}
-	// Secrets (set via: wrangler secret put SECRET_NAME):
-	//   ADMIN_SESSION_SECRET  - random 32+ char string for signing admin session cookies
-	//   READER_SESSION_SECRET - random 32+ char string for signing reader session cookies
+	// No "vars" block is needed: the site title, tagline, canonical URL and email
+	// "From" address are all set in Admin → Settings and stored in the database.
+	// (You may still add a "vars" block with SITE_TITLE / SITE_TAGLINE / SITE_URL
+	// / SITE_EMAIL_FROM as fallbacks used before those settings are saved.)
 	//
-	// Email sending uses the Cloudflare Workers Email binding (EMAIL above).
-	// The SITE_EMAIL_FROM address must be added as an allowed sender in your Cloudflare
-	// dashboard under Email > Email Routing > Settings > Custom Addresses.
+	// Secrets (set by `npm run setup`, or manually via `wrangler secret put`):
+	//   ADMIN_SESSION_SECRET  - random 32+ char string for signing admin sessions
+	//   READER_SESSION_SECRET - random 32+ char string for signing reader sessions
 }

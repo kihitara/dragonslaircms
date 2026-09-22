@@ -9,6 +9,7 @@
 
 import { sitePage, escapeHtml, escapeAttr, formatDate, html } from '../templates/base.js';
 import { loadChrome } from '../site.js';
+import { getSiteSettings } from '../db.js';
 import { renderArticleCommunity } from '../community.js';
 import { GALLERY_SCRIPT } from '../templates/blocks.js';
 
@@ -33,6 +34,14 @@ function redirectPermanent(location) {
 export async function handlePublicArticles(request, env, url) {
   if (request.method !== 'GET') return null;
   const path = url.pathname.replace(/\/$/, '') || '/';
+
+  // Root: serve the blog feed when the site is in "article feed" home mode,
+  // otherwise fall through so the page router renders the "home" page.
+  if (path === '/') {
+    let mode = 'page';
+    try { mode = (await getSiteSettings(env.DB)).home_mode || 'page'; } catch { /* default */ }
+    return mode === 'feed' ? homeFeedPage(request, env, url) : null;
+  }
 
   // Legacy permalinks → the new flat scheme (keeps indexed URLs alive).
   let m = path.match(/^\/(blog|news)\/([a-z0-9-]+)$/);
@@ -248,6 +257,91 @@ async function allPostsPage(request, env, url) {
     rows: results, total, page, heading: 'Posts',
     basePath: '/posts', canonical: `${env.SITE_URL}/posts`,
   });
+}
+
+// / — blog home: the latest posts with a "Browse" sidebar linking to the
+// category, series and tag listings that actually have published posts.
+async function homeFeedPage(request, env, url) {
+  const DB = env.DB;
+  const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
+  const total = (await DB.prepare(
+    `SELECT COUNT(*) n FROM articles WHERE status IN ('published', 'modified')`
+  ).first())?.n ?? 0;
+  const { results } = await DB.prepare(
+    `SELECT * FROM articles WHERE status IN ('published', 'modified')
+     ORDER BY publish_date DESC, id DESC LIMIT ? OFFSET ?`
+  ).bind(PER_PAGE, (page - 1) * PER_PAGE).all();
+
+  const views = (results || []).map(liveView).filter(Boolean);
+  await resolveTags(DB, views);
+  const lookups = await loadLookups(DB);
+  const { settings, navItems, footer, reader } = await loadChrome(env, url, request);
+  const pages = Math.max(1, Math.ceil(total / PER_PAGE));
+  const siteTitle = settings.org_name || env.SITE_TITLE || 'Home';
+  const cards = views.map((v) => card(v, lookups));
+  const aside = await browseSidebar(DB);
+
+  const content = `
+    <section class="section">
+      <div class="container blog-home">
+        <div class="blog-main">
+          <h1 class="visually-hidden">${escapeHtml(siteTitle)}</h1>
+          ${settings.org_tagline ? `<p class="blog-home-tagline">${escapeHtml(settings.org_tagline)}</p>` : ''}
+          ${cards.length ? `<div class="blog-feed">${cards.join('')}</div>` : '<p class="muted">Nothing published here yet.</p>'}
+          ${paginationHtml('/', page, pages)}
+        </div>
+        ${aside ? `<aside class="blog-aside">${aside}</aside>` : ''}
+      </div>
+    </section>`;
+
+  return html(sitePage({
+    // Empty title → sitePage renders just the site name (no SEO-template wrap),
+    // the same as the static home page.
+    env, title: '', description: settings.org_tagline || settings.seo_description || '',
+    canonical: `${env.SITE_URL}/`,
+    nav: navItems, footer, siteSettings: settings, reader, content,
+  }));
+}
+
+// "Browse" sidebar: category / series / tag lists (only ones with published
+// posts), each linking to its existing listing page, plus an RSS link.
+async function browseSidebar(DB) {
+  const sections = [];
+  const listBlock = (title, items, prefix) => {
+    if (!items.length) return '';
+    const links = items.map((it) =>
+      `<li><a href="/${prefix}/${escapeAttr(it.slug)}">${escapeHtml(it.title)}</a> <span class="browse-count">${it.n}</span></li>`).join('');
+    return `<div class="browse-group"><h2 class="browse-head">${escapeHtml(title)}</h2><ul class="browse-list">${links}</ul></div>`;
+  };
+  try {
+    const { results } = await DB.prepare(
+      `SELECT c.slug, c.title, COUNT(a.id) n FROM categories c
+       JOIN articles a ON a.category = c.slug AND a.status IN ('published', 'modified')
+       GROUP BY c.id ORDER BY c.sort_order, c.title`
+    ).all();
+    sections.push(listBlock('Categories', results || [], 'category'));
+  } catch { /* table absent */ }
+  try {
+    const { results } = await DB.prepare(
+      `SELECT s.slug, s.title, COUNT(a.id) n FROM series s
+       JOIN article_series x ON x.series_id = s.id
+       JOIN articles a ON a.id = x.article_id AND a.status IN ('published', 'modified')
+       GROUP BY s.id ORDER BY s.sort_order, s.title`
+    ).all();
+    sections.push(listBlock('Series', results || [], 'series'));
+  } catch { /* table absent */ }
+  try {
+    const { results } = await DB.prepare(
+      `SELECT t.slug, t.title, COUNT(a.id) n FROM tags t
+       JOIN article_tags at ON at.tag_id = t.id
+       JOIN articles a ON a.id = at.article_id AND a.status IN ('published', 'modified')
+       GROUP BY t.id ORDER BY t.title`
+    ).all();
+    sections.push(listBlock('Tags', results || [], 'tags'));
+  } catch { /* table absent */ }
+  const body = sections.filter(Boolean).join('');
+  if (!body) return '';
+  return `${body}<div class="browse-group"><a class="browse-rss" href="/feed.xml">Subscribe (RSS)</a></div>`;
 }
 
 // /category/:slug — one category's posts. Unknown slug → null so the request

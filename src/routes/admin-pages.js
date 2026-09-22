@@ -286,6 +286,19 @@ async function pagesList(env, user, url) {
     'SELECT id, slug, title, status, updated_at FROM pages ORDER BY updated_at DESC LIMIT ? OFFSET ?'
   ).bind(pageSize, (page - 1) * pageSize).all();
   const pages = results || [];
+
+  // When the home is an article feed, the "home" page (if published) is no longer
+  // served at / — it stays reachable at /home. Point that out with a link to it.
+  let feedNote = '';
+  try {
+    if ((await getSiteSettings(env.DB)).home_mode === 'feed') {
+      const home = pages.find((p) => p.slug === 'home' && p.status !== 'draft');
+      if (home) {
+        feedNote = `<div class="notice">The site root (/) is set to the <strong>article feed</strong> in <a href="/admin/settings">Settings</a>, so your “${escapeHtml(home.title)}” page is served at <a href="/home" target="_blank"><code>/home</code></a>, not <code>/</code>. <a href="/admin/pages/${home.id}">Open it</a> to unpublish it if you don’t want it reachable.</div>`;
+      }
+    }
+  } catch { /* settings unavailable → no note */ }
+
   const rows = pages.length
     ? pages.map((p) => `
         <tr>
@@ -302,6 +315,7 @@ async function pagesList(env, user, url) {
       <div class="actions"><a class="btn" href="/admin/pages/new">New page</a></div>
     </div>
     ${noticeFrom(url)}
+    ${feedNote}
     <p class="muted">Each page is an ordered list of blocks. Draft pages aren't on the site; a modified page keeps serving its last published version until re-published.</p>
     <table class="admin-table cards">
       <thead><tr><th>Title</th><th>URL</th><th>Status</th><th>Updated</th></tr></thead>

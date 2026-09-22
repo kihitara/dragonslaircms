@@ -571,6 +571,8 @@ const TEXT_SETTINGS = [
 ];
 // Select settings: [key, label, options([value,label]), hint, group, default].
 const SELECT_SETTINGS = [
+  ['home_mode', 'Home page', [['page', 'Static “home” page'], ['feed', 'Article feed (blog)']],
+    'What the site root (/) serves. “Static home page” renders the page with slug “home” (the default). “Article feed” shows your latest posts with a Browse sidebar — ideal for a blog. An existing “home” page stays published and reachable at /home either way; unpublish it from Pages if you don’t want it live.', 'Home page', 'page'],
   ['gallery_layout_default', 'Default gallery layout', [['grid', 'Grid'], ['carousel', 'Carousel']],
     'The layout preset when you insert a gallery into an article. Each gallery can still be switched individually.', 'Galleries', 'grid'],
 ];

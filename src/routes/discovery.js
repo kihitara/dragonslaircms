@@ -114,6 +114,11 @@ async function sitemap(env, url) {
   add('/');
   add('/posts');
 
+  // In "article feed" home mode the root serves the feed, so a published "home"
+  // page is a distinct URL at /home and should be listed (it is skipped below).
+  let feedHome = false;
+  try { feedHome = (await getSiteSettings(env.DB)).home_mode === 'feed'; } catch { /* default */ }
+
   // Category listings that actually have published articles.
   try {
     const { results } = await env.DB.prepare(
@@ -130,7 +135,7 @@ async function sitemap(env, url) {
       `SELECT slug, updated_at FROM pages WHERE status IN ('published', 'modified') AND COALESCE(hidden, 0) = 0`
     ).all();
     for (const p of results || []) {
-      if (p.slug === 'home') continue;
+      if (p.slug === 'home') { if (feedHome) add('/home', p.updated_at); continue; }
       add('/' + p.slug, p.updated_at);
     }
   } catch { /* pages table absent → skip */ }

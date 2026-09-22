@@ -561,3 +561,28 @@ input[type="file"]:hover::file-selector-button { background: var(--color-brand-s
   margin-top: 0.6em;
   margin-bottom: 0.25em;
 }
+
+/* Blog home (article-feed home mode): posts on the left, a "Browse" sidebar on
+   the right. Collapses to a single column on narrow screens. */
+.blog-home { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 2rem; align-items: start; }
+.blog-home-tagline { font-size: 1.15rem; color: var(--color-muted); margin: 0 0 1.4rem; }
+/* Blog home posts: full-width tiles stacked one per row, cover as a full-bleed
+   banner on top (rest of the card unchanged). Scoped to the home feed only. */
+.blog-feed { display: flex; flex-direction: column; gap: 1.5rem; }
+.blog-feed .article-card { overflow: hidden; }
+.blog-feed .article-card > a:first-child { display: block; margin: -1.4rem -1.4rem 1.2rem; }
+.blog-feed .article-card .cover { width: 100%; aspect-ratio: 16 / 7; border-radius: 0; margin: 0; }
+.blog-aside { position: sticky; top: 1rem; display: flex; flex-direction: column; gap: 1.4rem; }
+.browse-group { border: 1px solid var(--color-surface-dark); border-radius: var(--radius-md); padding: 0.9rem 1rem; background: var(--color-surface); }
+.browse-head { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); margin: 0 0 0.6rem; }
+.browse-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.browse-list a { text-decoration: none; }
+.browse-list a:hover { color: var(--color-brand); }
+.browse-count { color: var(--color-muted); font-size: 0.8rem; }
+.browse-rss { font-weight: 600; text-decoration: none; }
+.browse-rss:hover { color: var(--color-brand); }
+@media (max-width: 820px) {
+  .blog-home { grid-template-columns: 1fr; }
+  .blog-aside { position: static; flex-direction: row; flex-wrap: wrap; }
+  .blog-aside .browse-group { flex: 1 1 220px; }
+}

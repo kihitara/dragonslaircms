@@ -1,4 +1,10 @@
-# Copy to .dev.vars for local development (wrangler dev reads this file).
-# Generate values with: openssl rand -hex 32
-ADMIN_SESSION_SECRET=replace-with-random-32-plus-chars
-READER_SESSION_SECRET=replace-with-random-32-plus-chars
+# Optional overrides for `wrangler dev` (copy to .dev.vars).
+#
+# Nothing here is required. The CMS mints its own session-signing secrets on
+# first run and stores them in the database, so a fresh install needs no
+# hand-generated values. Set these only to pin the secrets yourself — e.g. to
+# keep sessions valid across a database reset — and use `wrangler secret put`
+# for the deployed Worker rather than this file.
+#
+# ADMIN_SESSION_SECRET=random-32-plus-chars
+# READER_SESSION_SECRET=random-32-plus-chars

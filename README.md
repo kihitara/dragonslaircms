@@ -38,9 +38,7 @@ Two easy paths — pick one. Both leave you with your own Worker, D1 database an
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/kihitara/dragonslaircms)
 
-This clones the repo into **your** GitHub/GitLab account, **auto-provisions** the D1 database and R2 bucket, prompts you for the two session secrets (from `.dev.vars.example`), deploys, and wires up push-to-deploy CI. When it finishes, jump to [First run](#first-run).
-
-> Generate a value for each secret it asks for with `openssl rand -hex 32` (or any random 32+ character string).
+This clones the repo into **your** GitHub/GitLab account, **auto-provisions** the D1 database and R2 bucket, deploys, and wires up push-to-deploy CI. There is nothing to fill in and no secrets to generate — the Worker mints its own session-signing secrets on first run. When it finishes, jump to [First run](#first-run).
 
 ### Option B — Guided CLI setup
 
@@ -52,7 +50,7 @@ npx wrangler login        # authorises this machine with your Cloudflare account
 npm run setup             # interactive: names, resources, secrets, schema, deploy
 ```
 
-`npm run setup` asks what to call the Worker, the D1 database and the R2 bucket (Enter accepts the defaults), then creates the resources, writes `wrangler.jsonc`, generates and stores the session secrets, applies `schema.sql`, and deploys. Add `--dry-run` to see every step without changing anything, or `--no-deploy` to stop before the deploy. Then head to [First run](#first-run).
+`npm run setup` asks what to call the Worker, the D1 database and the R2 bucket (Enter accepts the defaults), then creates the resources, writes `wrangler.jsonc`, applies `schema.sql`, and deploys. It asks for no secrets. Add `--dry-run` to see every step without changing anything, or `--no-deploy` to stop before the deploy. Then head to [First run](#first-run).
 
 ---
 
@@ -68,13 +66,13 @@ Then, in **Admin → Settings**, set:
 - **Home page** — serve a static `home` page (default) or a blog-style **article feed** at the site root. For a pure blog, choose the feed and you never need a `home` page.
 - Logo/favicon, colours, fonts, navigation, footer, pages, articles, email copy — all editable in the admin.
 
-Everything above lives in the database, so you rarely touch `wrangler.jsonc` again. Deploy code updates with `npm run deploy`; re-run `npm run db:schema:remote` only when `schema.sql` changes. (With Option A, pushing to your repo's main branch deploys.)
+Everything above lives in the database, so you rarely touch `wrangler.jsonc` again. Deploy code updates with `npm run deploy`, which applies `schema.sql` (idempotent — safe to re-run) before deploying, so a schema change never needs a separate step. (With Option A, pushing to your repo's main branch deploys.)
 
 > **CLI alternative to `/admin/setup`:** seed the first admin from the terminal:
 > ```sh
 > node scripts/seed-admin.js <email> "<name>" <password> > /tmp/seed.sql
 > npm run db:schema:remote   # if you haven't applied the schema yet
-> wrangler d1 execute <your-db-name> --file=/tmp/seed.sql --remote
+> wrangler d1 execute DB --file=/tmp/seed.sql --remote
 > ```
 
 ---
@@ -83,22 +81,19 @@ Everything above lives in the database, so you rarely touch `wrangler.jsonc` aga
 
 ```sh
 npm install
-cp .dev.vars.example .dev.vars    # fill in two random secrets (openssl rand -hex 32)
 npm run db:schema                 # create the local D1 schema
 npm run dev                       # wrangler dev (local)
 ```
 
-Open the local URL and go to `/admin` → `/admin/setup` to create the first admin, then log in. `.dev.vars` (gitignored) holds `ADMIN_SESSION_SECRET` / `READER_SESSION_SECRET`.
-
-> If you ran `npm run setup`, it already created `.dev.vars` for you.
+Open the local URL and go to `/admin` → `/admin/setup` to create the first admin, then log in. Nothing else to configure: the local database gets its own generated session secrets, separate from your deployed site's.
 
 ## Manual / advanced setup
 
 You don't need this if you used Option A or B. It's here for full control or CI.
 
 - **Resources:** since Wrangler 4.45, `npm run deploy` auto-provisions any D1/R2 in `wrangler.jsonc` that don't exist yet and writes their IDs back. To create them yourself instead: `wrangler d1 create <name>` (paste the id into `d1_databases[0].database_id`) and `wrangler r2 bucket create <name>`.
-- **Secrets:** `wrangler secret put ADMIN_SESSION_SECRET` and `… READER_SESSION_SECRET` (32+ random chars each).
-- **Schema + deploy:** `npm run db:schema:remote` then `npm run deploy`.
+- **Secrets:** none are required. The Worker generates `ADMIN_SESSION_SECRET` / `READER_SESSION_SECRET` on first run and stores them in the database. To pin or rotate them yourself, `wrangler secret put ADMIN_SESSION_SECRET` (32+ random chars) — a secret that is set always wins over the generated one, and setting one signs everybody out.
+- **Schema + deploy:** `npm run deploy` applies `schema.sql` to the remote database and then deploys. `npm run db:schema:remote` (remote) and `npm run db:schema` (local) apply the schema on their own.
 - **CLI credentials for CI:** instead of `wrangler login`, copy `.env.example` to `.env` and set `CLOUDFLARE_API_TOKEN` (dashboard → My Profile → API Tokens → “Edit Cloudflare Workers” template, **plus a `D1 → Edit`** permission) and `CLOUDFLARE_ACCOUNT_ID` (dashboard → Workers & Pages → right sidebar, or `npx wrangler whoami`). `.env` is gitignored — never commit it.
 
 ### Using your own names
@@ -106,7 +101,7 @@ You don't need this if you used Option A or B. It's here for full control or CI.
 `npm run setup` handles this for you. If you're doing it by hand, the starter uses `dragonslaircms` for the Worker, the D1 database and the R2 bucket — rename any or all, keeping each name consistent:
 
 - **Worker name** — `wrangler.jsonc` → top-level `"name"`.
-- **D1 database name** — `wrangler.jsonc` → `d1_databases[0].database_name`, **and** the `db:schema` / `db:schema:remote` scripts in `package.json` (they call `wrangler d1 execute <name> …`).
+- **D1 database name** — `wrangler.jsonc` → `d1_databases[0].database_name`. One place only: the `db:schema*` scripts address the `DB` **binding**, not the database name.
 - **R2 bucket name** — `wrangler.jsonc` → `r2_buckets[0].bucket_name`.
 
 Leave the **binding** names (`DB`, `MEDIA`, `EMAIL`, `ASSETS`) as they are — the code refers to those, not the resource names.

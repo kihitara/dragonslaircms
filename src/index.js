@@ -16,6 +16,7 @@ import { handleSearch } from './routes/search.js';
 import { defaultTokens, tokensToCss, surfacesToCss, fontFacesToCss } from './tokens.js';
 import { getThemeTokens, getSiteConfig, getSiteSettings } from './db.js';
 import { loadChrome } from './site.js';
+import { resolveSessionSecrets } from './secrets.js';
 import { sitePage, escapeHtml, html } from './templates/base.js';
 
 export default {
@@ -31,9 +32,10 @@ export default {
       // (the admin list endpoint is behind auth).
       if (path === '/emoticons.json') return emoticonsJson(env);
 
-      // Resolve the admin-settable site URL / email-from once per request and
-      // hand every handler a copy of env carrying the effective values, so the
-      // wrangler.jsonc vars become fallbacks rather than the only source.
+      // Resolve the admin-settable site URL / email-from and the session
+      // secrets once per request, and hand every handler a copy of env carrying
+      // the effective values, so the wrangler.jsonc vars become fallbacks
+      // rather than the only source.
       const renv = await resolveEnv(env);
 
       if (path === '/admin' || path.startsWith('/admin/')) {
@@ -66,15 +68,18 @@ export default {
 };
 
 // Effective env: overlay the admin-settable site_url / email_from (site_settings)
-// onto the wrangler vars, which act as fallbacks. Returns a per-request copy so
-// the shared env object is never mutated (no cross-request bleed). SITE_URL is
-// stripped of any trailing slash so `${SITE_URL}/path` never doubles up.
+// and the session secrets (minted into site_config when not supplied, see
+// secrets.js) onto the wrangler vars, which act as fallbacks. Returns a
+// per-request copy so the shared env object is never mutated (no cross-request
+// bleed). SITE_URL is stripped of any trailing slash so `${SITE_URL}/path`
+// never doubles up.
 async function resolveEnv(env) {
   let s = {};
   try { s = await getSiteSettings(env.DB); } catch { s = {}; }
   const siteUrl = ((s.site_url || '').trim() || env.SITE_URL || '').replace(/\/+$/, '');
   const emailFrom = (s.email_from || '').trim() || env.SITE_EMAIL_FROM;
-  return { ...env, SITE_URL: siteUrl, SITE_EMAIL_FROM: emailFrom };
+  const secrets = await resolveSessionSecrets(env);
+  return { ...env, ...secrets, SITE_URL: siteUrl, SITE_EMAIL_FROM: emailFrom };
 }
 
 async function themeCss(env) {

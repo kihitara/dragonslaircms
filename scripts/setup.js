@@ -9,10 +9,11 @@
  * It asks what to call the Worker, the D1 database and the R2 bucket, then:
  *   1. creates the D1 database and R2 bucket (via wrangler),
  *   2. writes those names + the new database_id into wrangler.jsonc,
- *   3. points the db:schema scripts at the chosen database name,
- *   4. generates and stores the two session secrets (and a local .dev.vars),
- *   5. applies schema.sql to the remote database,
- *   6. deploys the Worker.
+ *   3. applies schema.sql to the remote database,
+ *   4. deploys the Worker.
+ *
+ * It asks for no secrets: the Worker mints its own session-signing secrets on
+ * first run and keeps them in the database.
  *
  * Prerequisites: Node 20+, a Cloudflare account, and `wrangler login` (the
  * script offers to run it). Uses only Node built-ins — no extra dependencies.
@@ -20,8 +21,7 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout, argv } from 'node:process';
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -118,28 +118,19 @@ async function main() {
   if (r2.code !== 0 && !/already exists/i.test(r2.stdout)) { say(r2.stdout); fail('Could not create the R2 bucket.'); }
   ok('R2 bucket ready.');
 
-  // 5. patch wrangler.jsonc + package.json
+  // 5. patch wrangler.jsonc (the db:schema scripts address the DB *binding*, so
+  // they need no patching whatever the database is called)
   step('Writing configuration');
   patchWrangler({ workerName, dbName, bucketName, databaseId });
-  patchPackageScripts(dbName);
-  ok('wrangler.jsonc and package.json updated.');
+  ok('wrangler.jsonc updated.');
 
-  // 6. secrets (remote) + local .dev.vars
-  step('Setting session secrets');
-  const adminSecret = randomBytes(32).toString('base64url');
-  const readerSecret = randomBytes(32).toString('base64url');
-  putSecret('ADMIN_SESSION_SECRET', adminSecret);
-  putSecret('READER_SESSION_SECRET', readerSecret);
-  writeDevVars(adminSecret, readerSecret);
-  ok('Secrets stored (remote) and written to .dev.vars for local dev.');
-
-  // 7. remote schema
+  // 6. remote schema
   step('Applying the database schema (remote)');
   const mig = wrangler(['d1', 'execute', dbName, '--file=schema.sql', '--remote', '--yes'], {});
   if (mig.code !== 0) warn('Schema step returned a non-zero code — check the output above. You can re-run `npm run db:schema:remote`.');
   else ok('Schema applied.');
 
-  // 8. deploy
+  // 7. deploy
   if (NO_DEPLOY) {
     warn('Skipping deploy (--no-deploy). Run `npm run deploy` when ready.');
   } else if (await confirm('Deploy the Worker now?')) {
@@ -174,31 +165,6 @@ function patchWrangler({ workerName, dbName, bucketName, databaseId }) {
   }
   t = t.replace(/("bucket_name"\s*:\s*")[^"]*(")/, `$1${bucketName}$2`);
   writeFileSync(p, t);
-}
-
-function patchPackageScripts(dbName) {
-  if (DRY) { say(`${c.dim}[dry-run] point db:schema scripts at "${dbName}"${c.reset}`); return; }
-  const p = join(ROOT, 'package.json');
-  const pkg = JSON.parse(readFileSync(p, 'utf8'));
-  if (pkg.scripts) {
-    for (const k of ['db:schema', 'db:schema:remote']) {
-      if (pkg.scripts[k]) pkg.scripts[k] = pkg.scripts[k].replace(/(d1 execute )\S+/, `$1${dbName}`);
-    }
-  }
-  writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
-}
-
-function putSecret(name, value) {
-  if (DRY) { say(`${c.dim}[dry-run] wrangler secret put ${name}${c.reset}`); return; }
-  const r = wrangler(['secret', 'put', name], { input: value + '\n' });
-  if (r.code !== 0) warn(`Could not set ${name} — set it later with \`npx wrangler secret put ${name}\`.`);
-}
-
-function writeDevVars(adminSecret, readerSecret) {
-  if (DRY) { say(`${c.dim}[dry-run] write .dev.vars${c.reset}`); return; }
-  const p = join(ROOT, '.dev.vars');
-  if (existsSync(p)) { warn('.dev.vars already exists — leaving it untouched.'); return; }
-  writeFileSync(p, `ADMIN_SESSION_SECRET=${adminSecret}\nREADER_SESSION_SECRET=${readerSecret}\n`);
 }
 
 main().catch((e) => fail(e?.stack || String(e)));

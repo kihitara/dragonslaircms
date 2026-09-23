@@ -48,7 +48,8 @@
 	// (You may still add a "vars" block with SITE_TITLE / SITE_TAGLINE / SITE_URL
 	// / SITE_EMAIL_FROM as fallbacks used before those settings are saved.)
 	//
-	// Secrets (set by `npm run setup`, or manually via `wrangler secret put`):
-	//   ADMIN_SESSION_SECRET  - random 32+ char string for signing admin sessions
-	//   READER_SESSION_SECRET - random 32+ char string for signing reader sessions
+	// No secrets are required either: the Worker mints its own session-signing
+	// secrets on first run and stores them in the database. To pin or rotate them
+	// yourself, `wrangler secret put ADMIN_SESSION_SECRET` (and READER_SESSION_SECRET)
+	// — a secret that is set always wins over the generated one.
 }

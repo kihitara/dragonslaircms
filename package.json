@@ -10,9 +10,9 @@
   "scripts": {
     "setup": "node scripts/setup.js",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:schema": "wrangler d1 execute dragonslaircms --file=schema.sql",
-    "db:schema:remote": "wrangler d1 execute dragonslaircms --file=schema.sql --remote"
+    "deploy": "npm run db:schema:remote && wrangler deploy",
+    "db:schema": "wrangler d1 execute DB --file=schema.sql --local --yes",
+    "db:schema:remote": "wrangler d1 execute DB --file=schema.sql --remote --yes"
   },
   "dependencies": {
     "marked": "^12.0.0"

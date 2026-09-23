@@ -10,6 +10,7 @@ import { BLOCK_MANIFEST, SURFACES } from '../blocks-manifest.js';
 import { MEDIA_PICKER_HEAD } from './admin-media.js';
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 import { PREVIEW_HEAD, previewButton, previewPage } from './admin-preview.js';
+import { exportPage, exportButtons, EXPORT_HEAD } from './admin-export.js';
 
 export async function handlePages(request, env, url, user) {
   const DB = env.DB;
@@ -30,6 +31,11 @@ export async function handlePages(request, env, url, user) {
       return pageForm(env, user, pg, url);
     }
     if (method === 'POST') return savePageRoute(request, env, user, id);
+  }
+  if ((m = path.match(/^\/admin\/pages\/(\d+)\/(export\.md|export\.html|print)$/)) && method === 'GET') {
+    const pg = await getPage(DB, parseInt(m[1], 10));
+    if (!pg) return notFound(env, user, path);
+    return exportPage(env, url, pg, m[2] === 'export.md' ? 'md' : m[2] === 'export.html' ? 'html' : 'print');
   }
   if ((m = path.match(/^\/admin\/pages\/(\d+)\/publish$/)) && method === 'POST') {
     return publishPage(request, env, user, parseInt(m[1], 10));
@@ -465,6 +471,7 @@ async function pageForm(env, user, pg, url) {
       <div class="actions">
         ${previewButton('/admin/pages/preview')}
         ${!isNew && (status === 'published' || status === 'modified') ? `<a class="btn btn-secondary btn-small" href="/${escapeAttr(pg.slug === 'home' ? '' : pg.slug)}" target="_blank">View live ↗</a>` : ''}
+        ${!isNew ? exportButtons(`/admin/pages/${pg.id}`) : ''}
         ${deleteForm}
       </div>
     </div>
@@ -544,6 +551,6 @@ async function pageForm(env, user, pg, url) {
     content,
     // wysiwyg.js loads without defer so window.WYSIWYG exists before
     // page-editor.js (end of body) runs its first render + upgradeAll pass.
-    extraHead: `<link rel="stylesheet" href="/css/blocks.css"><link rel="stylesheet" href="/css/wysiwyg.css"><script src="/js/wysiwyg.js"></script>${MEDIA_PICKER_HEAD}${CONFIRM_MODAL_HEAD}${PREVIEW_HEAD}${EDITOR_CSS}`,
+    extraHead: `<link rel="stylesheet" href="/css/blocks.css"><link rel="stylesheet" href="/css/wysiwyg.css"><script src="/js/wysiwyg.js"></script>${MEDIA_PICKER_HEAD}${CONFIRM_MODAL_HEAD}${PREVIEW_HEAD}${EXPORT_HEAD}${EDITOR_CSS}`,
   }));
 }

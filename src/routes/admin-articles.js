@@ -15,6 +15,7 @@ import { notifyNewArticle } from '../community.js';
 import { MEDIA_PICKER_HEAD } from './admin-media.js';
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 import { PREVIEW_HEAD, previewButton, previewArticle } from './admin-preview.js';
+import { exportArticle, exportButtons, EXPORT_HEAD } from './admin-export.js';
 
 const BASE = '/admin/articles';
 
@@ -44,6 +45,13 @@ export async function handleArticles(request, env, url, user) {
     const id = Number(m[1]);
     if (method === 'GET') return editPage(env, user, url, id);
     if (method === 'POST') return save(request, env, user, id);
+  }
+
+  m = path.match(/^\/admin\/articles\/(\d+)\/(export\.md|export\.html|print)$/);
+  if (m && method === 'GET') {
+    const row = await env.DB.prepare('SELECT * FROM articles WHERE id = ?').bind(Number(m[1])).first();
+    if (!row) return null;
+    return exportArticle(env, url, row, m[2] === 'export.md' ? 'md' : m[2] === 'export.html' ? 'html' : 'print');
   }
 
   m = path.match(/^\/admin\/articles\/(\d+)\/publish$/);
@@ -245,6 +253,7 @@ const EDITOR_HEAD = `
 ${MEDIA_PICKER_HEAD}
 ${CONFIRM_MODAL_HEAD}
 ${PREVIEW_HEAD}
+${EXPORT_HEAD}
 <link rel="stylesheet" href="/css/wysiwyg.css">
 <link rel="stylesheet" href="/css/blocks.css">
 <script src="/js/wysiwyg.js" defer></script>
@@ -385,7 +394,8 @@ async function editPage(env, user, url, id) {
         <h1>${isNew ? 'New article' : 'Edit article'}</h1>
         <div class="actions">
           ${previewButton(`${BASE}/preview`)}
-          ${!isNew && status !== 'draft' ? `<a class="btn btn-secondary btn-small" href="/${escapeAttr(article.category)}/${escapeAttr(article.slug)}" target="_blank">View live ↗</a>` : ''}
+          ${!isNew && status !== 'draft' ? `<a class="btn btn-secondary btn-small" href="/posts/${escapeAttr(article.slug)}" target="_blank">View live ↗</a>` : ''}
+          ${!isNew ? exportButtons(`${BASE}/${id}`) : ''}
           <button class="btn" type="submit">Save</button>
           ${!isNew && canPublish && status !== 'published' ? `<button class="btn btn-green" type="submit" formaction="${BASE}/${id}/publish">Publish</button>` : ''}
         </div>

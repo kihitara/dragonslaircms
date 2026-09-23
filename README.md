@@ -17,6 +17,7 @@ A self-contained CMS on Cloudflare Workers: one Worker serves the public site an
 - **Pages** — block-based (20+ block types incl. a media gallery), draft → publish with frozen snapshots, revision history, per-block surface palettes, live preview.
 - **Articles** — WYSIWYG body with inline **image galleries** (grid or carousel + lightbox), custom **categories**, ordered **series/trips** (an article can join several), authors/reviewers, tags, covers, **scheduled publishing**, and the same snapshot/revision model with live preview.
 - **Discovery** — flat `/posts/:slug` permalinks, `/category/:slug` and `/series/:slug` listings, an **RSS feed** (`/feed.xml`), `sitemap.xml`, `robots.txt`, and a public **search** page. Responsive images are downscaled to WebP on upload. The site root can be a **static home page or a blog-style article feed** (with a Browse sidebar) — a one-setting toggle.
+- **Export** — download any page or article as **Markdown**, as a **self-contained HTML** file (theme CSS, fonts and images all embedded, so it opens offline), or as a **PDF** through the browser's own print dialog. Admin-only, from the editor's action bar, and it works on drafts as well as live content.
 - **Publish control** — draft / published / modified states, revert, and **unpublish (take offline)** that returns a live item to draft without deleting it.
 - **Branding** — design tokens (light + dark), surface palette designer, font uploads, logo/favicon, navigation/footer editors, and global settings (site title, canonical URL, email sender, SEO). The whole site re-themes from the admin — no code edits.
 - **Community** — moderated comments (anonymous or reader accounts) with staff replies, corrections on articles *and* pages, blog subscription emails.
@@ -144,6 +145,8 @@ src/routes/discovery.js RSS feed, sitemap.xml, robots.txt
 src/routes/search.js    Public search
 src/routes/reader.js    Reader account flows (/reader/*)
 src/routes/api.js       Form/JSON endpoints (/api/*)
+src/export-md.js        Page/article → Markdown (hand-rolled HTML→MD, no deps)
+src/export-html.js      Page/article → standalone HTML with assets embedded
 src/tokens.js           Design token defaults + CSS generators
 src/templates/          HTML shells and the runtime block renderer
 public/                 Static assets (CSS, editor JS, icons)

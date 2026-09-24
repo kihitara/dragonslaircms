@@ -190,7 +190,10 @@ async function destroy(env, user, id) {
   const DB = env.DB;
   const cat = await getCategory(DB, id);
   if (!cat) return redirect(BASE);
-  await DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run(); // articles keep the stored slug
+  // Unlike a rename (see recategorise), a delete deliberately does NOT touch the
+  // articles: there's no successor slug to move them to, so they keep the stored
+  // one and surface as "<slug> (removed)" in the editor for someone to reassign.
+  await DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run();
   await logActivity(DB, user, 'deleted', 'category', cat.title);
   return redirect(BASE);
 }

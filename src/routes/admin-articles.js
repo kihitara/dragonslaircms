@@ -184,6 +184,9 @@ async function recordOf(DB, data) {
     share_image: data.share_image, content: data.content,
     comment_mode: data.comment_mode,
     corrections_disabled: data.corrections_disabled,
+    // Kept for Revert and Restore, which put these tags back on the working copy.
+    // The public page no longer reads them — it resolves tags from article_tags
+    // so a renamed tag doesn't vanish (see liveView in public-articles.js).
     tags: await tagSlugsFor(DB, data.tagIds),
   };
 }

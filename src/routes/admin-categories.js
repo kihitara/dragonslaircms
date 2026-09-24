@@ -142,6 +142,17 @@ async function editPage(env, user, url, id) {
   return html(adminPage({ env, user, title: isNew ? 'New category' : `Edit category: ${cat.title}`, path: BASE, content, extraHead: CONFIRM_MODAL_HEAD + RICHTEXT_HEAD }));
 }
 
+// Move every article from one category slug to another, including the copy held
+// in each published snapshot so live pages follow the rename immediately.
+async function recategorise(DB, from, to) {
+  await DB.prepare('UPDATE articles SET category = ? WHERE category = ?').bind(to, from).run();
+  await DB.prepare(
+    `UPDATE articles SET published_snapshot = json_set(published_snapshot, '$.category', ?)
+     WHERE published_snapshot IS NOT NULL AND json_valid(published_snapshot)
+       AND json_extract(published_snapshot, '$.category') = ?`
+  ).bind(to, from).run();
+}
+
 async function upsert(request, env, user, id) {
   const DB = env.DB;
   const form = await request.formData();
@@ -158,6 +169,10 @@ async function upsert(request, env, user, id) {
       if (!existing) return redirect(BASE);
       await DB.prepare('UPDATE categories SET title = ?, slug = ?, description = ?, sort_order = ? WHERE id = ?')
         .bind(title, slug, description, sortOrder, id).run();
+      // Articles reference a category by slug, in the column and again inside the
+      // frozen published_snapshot. Without carrying both over, a rename orphans
+      // every article onto a slug that no longer exists.
+      if (existing.slug !== slug) await recategorise(DB, existing.slug, slug);
       await logActivity(DB, user, 'updated', 'category', title);
     } else {
       await DB.prepare('INSERT INTO categories (title, slug, description, sort_order) VALUES (?, ?, ?, ?)')

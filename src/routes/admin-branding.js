@@ -312,8 +312,8 @@ export async function handlePalette(request, env, url, user) {
     </form>
     <div class="card" style="margin-top:1.6rem">
       <h2>Custom surfaces</h2>
-      <p class="muted small">A custom surface becomes a <code>surface-&lt;key&gt;</code> class usable anywhere
-        surfaces are picked. New surfaces start as a copy of Default (page).</p>
+      <p class="muted small">A custom surface becomes a <code>surface-&lt;key&gt;</code> class, and joins the
+        background menus on page blocks and an article's hero. New surfaces start as a copy of Default (page).</p>
       ${customList}
       <form method="post" action="/admin/palette/add" class="addrow" style="margin-top:.8rem">
         <input type="text" name="name" placeholder="e.g. Highlight" required>
@@ -498,7 +498,7 @@ export async function handleFonts(request, env, url, user) {
   const uploadCard = `
     <div class="card" style="margin-bottom:1.4rem">
       <h2>Upload a font file</h2>
-      <p class="muted small">Stored in media under <code>fonts/</code> and added to the face list below
+      <p class="muted small">Stored in media under <code>media/fonts/</code> and added to the face list below
         automatically. Add one face per weight/style you need.</p>
       <form method="post" action="/admin/fonts/upload" enctype="multipart/form-data" class="upload-row">
         <div class="field grow"><label for="font-file">Font file (.woff2 recommended)</label>
@@ -538,8 +538,9 @@ async function uploadFont(request, env, user) {
   if (!FONT_TYPES[ext]) {
     return redirect(backWith('/admin/fonts', 'err', 'Unsupported file type — use .woff2, .woff, .ttf or .otf.'));
   }
-  // Bytes live in R2; the media route serves them back at /media/<key>.
-  await env.MEDIA.put(`fonts/${safe}`, await file.arrayBuffer(), {
+  // Bytes live in R2; the media route serves them back at /media/<key>, and it
+  // only serves keys under media/ — so the key has to carry that prefix.
+  await env.MEDIA.put(`media/fonts/${safe}`, await file.arrayBuffer(), {
     httpMetadata: { contentType: FONT_TYPES[ext] },
   });
 
@@ -562,7 +563,7 @@ async function uploadFont(request, env, user) {
 const TEXT_SETTINGS = [
   ['org_name', 'Organisation name', 'text', 'Shown in the header, footer, admin and page titles.'],
   ['org_tagline', 'Tagline', 'text', 'Short line shown on the home page and in the footer.'],
-  ['site_url', 'Site URL (canonical)', 'text', 'The public base URL, e.g. https://example.com (no trailing slash). Used for canonical links, the RSS feed, the sitemap and links in emails. Falls back to SITE_URL in wrangler.jsonc, then the request origin.'],
+  ['site_url', 'Site URL (canonical)', 'text', 'The public base URL, e.g. https://example.com (no trailing slash). Used for canonical links, the RSS feed, the sitemap and links in emails. Falls back to SITE_URL in wrangler.jsonc, then the origin of the current request. Set it explicitly if you use scheduled publishing: the cron has no request to borrow an origin from, so links in the emails it sends need this.'],
   ['email_from', 'Email “From” address', 'text', 'The address outgoing email is sent from, e.g. My Site <hello@example.com>. Must be an allowed sender set up in Cloudflare Email Routing. Falls back to SITE_EMAIL_FROM in wrangler.jsonc.'],
   ['logo_url', 'Logo / favicon image', 'media', 'Shown in the site header, the admin, and as the browser tab icon. Defaults to the bundled icon. A square SVG or PNG works best.'],
   ['seo_title_template', 'SEO title template', 'text', 'Optional — how page titles are composed, e.g. "%s — My Site" or "%s | My Site".'],
@@ -755,8 +756,9 @@ async function emailEditPage(env, user, url, key) {
         <input type="text" id="et-subject" name="subject" value="${escapeAttr(subject)}" required>
       </div>
       <div class="field">
-        <label for="et-body">Body (plain text)</label>
+        <label for="et-body">Body (HTML)</label>
         <textarea id="et-body" name="body" rows="14" style="font-family:var(--font-mono);font-size:.85rem" required>${escapeHtml(body)}</textarea>
+        <p class="hint">Written as HTML — wrap paragraphs in <code>&lt;p&gt;…&lt;/p&gt;</code>, since line breaks on their own won't show. A plain-text version is generated automatically for clients that ask for one.</p>
         ${varsHtml}
       </div>
       <div class="form-actions">

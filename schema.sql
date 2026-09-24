@@ -306,8 +306,10 @@ CREATE TABLE IF NOT EXISTS email_templates (
 );
 
 -- ── Branding: design tokens ─────────────────────────────────────────────────
--- One row per token, grouped (color/font/radius/size/weight). Seeded from the
--- defaults in src/tokens.js on first run; /theme.css is generated from these.
+-- One row per token, grouped (color/font/radius/size/weight). Starts EMPTY: the
+-- defaults in src/tokens.js are overlaid at read time (see getThemeTokens), and a
+-- row appears only when an admin overrides that token. /theme.css is generated
+-- from the merge, so deleting a row is what "reset to default" means.
 
 CREATE TABLE IF NOT EXISTS theme_tokens (
   grp        TEXT NOT NULL,
@@ -340,8 +342,9 @@ CREATE TABLE IF NOT EXISTS site_settings (
 -- content embeds the file URL at insert time, so renaming a slug never breaks
 -- existing insertions — only deleting the file does. Category list (incl.
 -- empty categories) lives in site_config key 'emoticon_categories'.
--- Migration (pre-existing databases): run this CREATE TABLE, then seed the
--- four defaults from assets/emoticons/ (see README).
+-- Migration (pre-existing databases): run this CREATE TABLE. Nothing is seeded —
+-- the picker starts empty, and the samples in assets/emoticons/ are uploaded by
+-- hand from Admin → Emoticons.
 
 CREATE TABLE IF NOT EXISTS emoticons (
   slug       TEXT PRIMARY KEY,               -- lowercase-and-hyphens, unique

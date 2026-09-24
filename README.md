@@ -51,7 +51,7 @@ npx wrangler login        # authorises this machine with your Cloudflare account
 npm run setup             # interactive: names, resources, secrets, schema, deploy
 ```
 
-`npm run setup` asks what to call the Worker, the D1 database and the R2 bucket (Enter accepts the defaults), then creates the resources, writes `wrangler.jsonc`, applies `schema.sql`, and deploys. It asks for no secrets. Add `--dry-run` to see every step without changing anything, or `--no-deploy` to stop before the deploy. Then head to [First run](#first-run).
+`npm run setup` asks what to call the Worker, the D1 database and the R2 bucket (Enter accepts the defaults), then creates the resources, writes `wrangler.jsonc`, applies `schema.sql`, and deploys. It asks for no secrets. Add `npm run setup -- --dry-run` to see every step without changing anything, or `-- --no-deploy` to stop before the deploy (the bare `--` is what makes npm pass the flag to the script rather than eating it). Then head to [First run](#first-run).
 
 ---
 
@@ -67,7 +67,7 @@ Then, in **Admin → Settings**, set:
 - **Home page** — serve a static `home` page (default) or a blog-style **article feed** at the site root. For a pure blog, choose the feed and you never need a `home` page.
 - Logo/favicon, colours, fonts, navigation, footer, pages, articles, email copy — all editable in the admin.
 
-Everything above lives in the database, so you rarely touch `wrangler.jsonc` again. Deploy code updates with `npm run deploy`, which applies `schema.sql` (idempotent — safe to re-run) before deploying, so a schema change never needs a separate step. (With Option A, pushing to your repo's main branch deploys.)
+Everything above lives in the database, so you rarely touch `wrangler.jsonc` again. Deploy code updates with `npm run deploy`, which applies `schema.sql` (idempotent — safe to re-run) before deploying, so a *new table* needs no separate step. Adding a *column* to an existing table is not automatic: `schema.sql` only creates tables it doesn't already have, so column additions are written in it as commented-out `ALTER TABLE` lines for you to run once by hand. (With Option A, pushing to your repo's main branch deploys.)
 
 > **CLI alternative to `/admin/setup`:** seed the first admin from the terminal:
 > ```sh

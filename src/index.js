@@ -36,7 +36,7 @@ export default {
       // secrets once per request, and hand every handler a copy of env carrying
       // the effective values, so the wrangler.jsonc vars become fallbacks
       // rather than the only source.
-      const renv = await resolveEnv(env);
+      const renv = await resolveEnv(env, url);
 
       if (path === '/admin' || path.startsWith('/admin/')) {
         return await handleAdmin(request, renv, url);
@@ -73,10 +73,14 @@ export default {
 // per-request copy so the shared env object is never mutated (no cross-request
 // bleed). SITE_URL is stripped of any trailing slash so `${SITE_URL}/path`
 // never doubles up.
-async function resolveEnv(env) {
+async function resolveEnv(env, url = null) {
   let s = {};
   try { s = await getSiteSettings(env.DB); } catch { s = {}; }
-  const siteUrl = ((s.site_url || '').trim() || env.SITE_URL || '').replace(/\/+$/, '');
+  // Falling back to the request's own origin keeps every absolute link usable on
+  // a deployment that hasn't set a canonical URL yet — including the ones in
+  // email, where a relative path is simply broken. The cron has no request, so
+  // scheduled-publish notifications still need the setting.
+  const siteUrl = ((s.site_url || '').trim() || env.SITE_URL || (url ? url.origin : '')).replace(/\/+$/, '');
   const emailFrom = (s.email_from || '').trim() || env.SITE_EMAIL_FROM;
   const secrets = await resolveSessionSecrets(env);
   return { ...env, ...secrets, SITE_URL: siteUrl, SITE_EMAIL_FROM: emailFrom };

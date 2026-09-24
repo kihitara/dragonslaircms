@@ -3,7 +3,8 @@
 // `user` is always a logged-in CMS user here.
 
 import { roleAtLeast } from '../auth.js';
-import { logActivity, saveRevision, getRevisions, getRevision, getSiteSettings } from '../db.js';
+import { logActivity, saveRevision, getRevisions, getRevision, getSiteSettings, getSiteConfig } from '../db.js';
+import { SURFACE_KEYS } from '../tokens.js';
 import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
 import { BLOCK_MANIFEST, SURFACES } from '../blocks-manifest.js';
@@ -122,11 +123,15 @@ async function persistPage(DB, id, data, mode = 'save') {
     if (!snapshot && cur) snapshot = pageSnapshot(cur, cur.updated_at);
     status = 'modified';
   }
+  // Not every caller carries this (a revision predating the column, or one saved
+  // from a snapshot, has no value for it), and D1 rejects undefined outright —
+  // so fall back to what the page already has rather than binding a hole.
+  const correctionsOff = (data.corrections_disabled ?? cur?.corrections_disabled) ? 1 : 0;
   await DB.prepare(
     `UPDATE pages SET slug = ?, title = ?, status = ?, blocks = ?, meta_title = ?, meta_description = ?,
      share_image = ?, hidden = ?, full_width = ?, corrections_disabled = ?, published_snapshot = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(data.slug, data.title, status, data.blocks, data.meta_title, data.meta_description,
-    data.share_image, data.hidden, data.full_width, data.corrections_disabled, snapshot, id).run();
+    data.share_image, data.hidden, data.full_width, correctionsOff, snapshot, id).run();
   return status;
 }
 
@@ -224,6 +229,9 @@ async function revertToPublished(env, user, id) {
 }
 
 async function deletePage(env, user, id) {
+  // Gated on the handler, not just the button: deleting outright is at least as
+  // destructive as unpublishing, which already requires publisher.
+  if (!roleAtLeast(user, 'publisher')) return redirect(`/admin/pages/${id}?err=` + encodeURIComponent('Deleting requires the publisher role.'));
   const pg = await getPage(env.DB, id);
   await env.DB.prepare('DELETE FROM pages WHERE id = ?').bind(id).run();
   await logActivity(env.DB, user, 'deleted', 'page', pg ? (pg.title || pg.slug) : `#${id}`);
@@ -244,6 +252,7 @@ async function restoreRevision(env, user, id, revisionId) {
       slug: cleanSlug(data.slug), title: data.title || 'Untitled', blocks: data.blocks || '[]',
       meta_title: data.meta_title || null, meta_description: data.meta_description || null,
       share_image: data.share_image || null, hidden: data.hidden ? 1 : 0, full_width: data.full_width ? 1 : 0,
+      corrections_disabled: data.corrections_disabled,
     }, 'save');
   } catch (e) {
     if (isUniqueError(e)) return redirect(`/admin/pages/${id}?err=` + encodeURIComponent('Restoring failed: that slug is now taken by another page.'));
@@ -331,6 +340,20 @@ async function pagesList(env, user, url) {
   return html(adminPage({ env, user, title: 'Pages', path: '/admin/pages', content }));
 }
 
+// Surfaces added in the palette designer, as select options. They're stored in
+// site_config rather than the manifest, so every surface picker has to merge
+// them in or a custom surface is invisible to the editor.
+async function customSurfaceOptions(env) {
+  try {
+    const stored = (await getSiteConfig(env.DB, 'surfaces', {})) || {};
+    return Object.keys(stored)
+      .filter((k) => !SURFACE_KEYS.includes(k))
+      .map((k) => ({ value: k, label: (typeof stored[k]?.label === 'string' && stored[k].label) || k }));
+  } catch {
+    return []; // no palette saved yet → built-ins only
+  }
+}
+
 // Inject live select options into a (cloned) manifest: the Articles block's
 // "featured" picker gets the current published-article list, and its "category"
 // filter gets the managed category list.
@@ -354,6 +377,20 @@ async function manifestFor(env) {
     const f = (m.articles.fields || []).find((x) => x.key === 'category');
     if (f) f.options = opts;
   } catch { /* categories table may not be migrated yet — keep the fallback */ }
+
+  // Every per-item background picker (feature-grid cards and the like) gets the
+  // custom surfaces appended; the block-level one is driven by window.__SURFACES.
+  const customs = await customSurfaceOptions(env);
+  if (customs.length) {
+    for (const block of Object.values(m)) {
+      for (const field of block.fields || []) {
+        if (field.key === 'surface' && Array.isArray(field.options)) field.options = field.options.concat(customs);
+        for (const item of field.itemFields || []) {
+          if (item.key === 'surface' && Array.isArray(item.options)) item.options = item.options.concat(customs);
+        }
+      }
+    }
+  }
   return m;
 }
 
@@ -431,7 +468,9 @@ async function pageForm(env, user, pg, url) {
   const canPublish = roleAtLeast(user, 'publisher');
   const publishBtn = !isNew && canPublish && (status === 'draft' || status === 'modified')
     ? `<button class="btn btn-green" type="submit" formaction="/admin/pages/${pg.id}/publish" formmethod="POST">Publish</button>` : '';
-  const revertBtn = !isNew && canPublish && status === 'modified' && pg.published_snapshot
+  // Revert only discards unpublished edits, so editors get it too (and the
+  // article editor already offers it to them).
+  const revertBtn = !isNew && status === 'modified' && pg.published_snapshot
     ? `<button class="btn btn-secondary" type="submit" formaction="/admin/pages/${pg.id}/revert" formmethod="POST"
          data-confirm="Discard unpublished edits and revert to the published version?" data-confirm-ok="Revert">Revert to published</button>` : '';
   const unpublishBtn = !isNew && canPublish && status !== 'draft'
@@ -459,7 +498,7 @@ async function pageForm(env, user, pg, url) {
       </table>
     </details>` : '';
 
-  const deleteForm = isNew ? '' : `
+  const deleteForm = isNew || !canPublish ? '' : `
     <form method="POST" action="/admin/pages/${pg.id}/delete" style="margin:0"
           data-confirm="Delete this page? This cannot be undone." data-confirm-ok="Delete">
       <button class="btn btn-danger btn-small" type="submit">Delete page</button>
@@ -541,7 +580,7 @@ async function pageForm(env, user, pg, url) {
     </form>
     <script>
       window.__BLOCK_MANIFEST = ${forScript(manifest)};
-      window.__SURFACES = ${forScript(SURFACES)};
+      window.__SURFACES = ${forScript(SURFACES.concat(await customSurfaceOptions(env)))};
       window.__BLOCKS = ${forScript(blocks)};
     </script>
     <script src="/js/page-editor.js"></script>`;

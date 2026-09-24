@@ -198,7 +198,7 @@ async function updateArticle(DB, id, data, status) {
     data.slug, data.title, data.subheading, data.category, data.publish_date,
     data.cover, data.hero_surface || '', JSON.stringify(data.authors), JSON.stringify(data.reviewers),
     data.meta_title, data.meta_description, data.share_image,
-    data.content, data.comment_mode, data.corrections_disabled, status, id
+    data.content, data.comment_mode, data.corrections_disabled ? 1 : 0, status, id
   ).run();
   await setArticleTags(DB, id, data.tagIds);
 }
@@ -510,7 +510,7 @@ async function editPage(env, user, url, id) {
             <div class="field" style="display:flex;gap:0.5rem;flex-wrap:wrap">
               ${status === 'modified' ? `<button class="btn btn-secondary btn-small" type="submit" formaction="${BASE}/${id}/revert" data-confirm="Discard the unpublished changes and restore the live version?" data-confirm-ok="Revert">Revert to published</button>` : ''}
               ${canPublish && status !== 'draft' ? `<button class="btn btn-secondary btn-small" type="submit" formaction="${BASE}/${id}/unpublish" formnovalidate data-confirm="Take this article offline? It returns to draft and disappears from the site. Content and history are kept — you can publish it again anytime." data-confirm-ok="Take offline">Unpublish</button>` : ''}
-              <button class="btn btn-danger btn-small" type="submit" formaction="${BASE}/${id}/delete" data-confirm="Delete this article and its comments? This cannot be undone." data-confirm-ok="Delete">Delete</button>
+              ${canPublish ? `<button class="btn btn-danger btn-small" type="submit" formaction="${BASE}/${id}/delete" data-confirm="Delete this article and its comments? This cannot be undone." data-confirm-ok="Delete">Delete</button>` : ''}
             </div>` : ''}
           </div>
         </aside>
@@ -727,6 +727,7 @@ async function revertToPublished(env, user, id) {
     meta_title: snap.meta_title ?? null, meta_description: snap.meta_description ?? null,
     share_image: snap.share_image ?? null, content: snap.content ?? '',
     comment_mode: snap.comment_mode || (snap.comments_disabled ? 'closed' : 'enabled'),
+    corrections_disabled: snap.corrections_disabled ?? article.corrections_disabled,
     tagIds: await tagIdsForSlugs(DB, snap.tags),
   };
   await updateArticle(DB, id, data, 'published');
@@ -736,6 +737,8 @@ async function revertToPublished(env, user, id) {
 }
 
 async function destroy(env, user, id) {
+  // See admin-pages.js deletePage: delete is gated like unpublish.
+  if (!roleAtLeast(user, 'publisher')) return redirect(`${BASE}/${id}?err=publisher`);
   const DB = env.DB;
   const article = await getArticle(DB, id);
   if (!article) return redirect(BASE);
@@ -766,6 +769,7 @@ async function restoreRevision(env, user, id, revisionId) {
     meta_title: r.meta_title ?? null, meta_description: r.meta_description ?? null,
     share_image: r.share_image ?? null, content: r.content ?? '',
     comment_mode: r.comment_mode || (r.comments_disabled ? 'closed' : 'enabled'),
+    corrections_disabled: r.corrections_disabled ?? article.corrections_disabled,
     tagIds: await tagIdsForSlugs(DB, r.tags),
   };
   const status = article.status === 'draft' ? 'draft' : 'modified';

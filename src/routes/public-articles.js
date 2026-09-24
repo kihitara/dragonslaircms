@@ -99,7 +99,10 @@ function stripTags(s) {
 
 // The public-facing version of an article row: the frozen snapshot when there
 // is one, else the row itself (published with no snapshot yet). Drafts → null.
-// tags is an array of slugs, or null meaning "resolve from article_tags".
+// tags is always null here, meaning "resolve from article_tags": they're
+// navigation rather than frozen content, the tag listings already select on the
+// live join, and reading the snapshot's slugs meant a renamed tag silently
+// vanished from its own articles until each was republished.
 function liveView(row) {
   if (!row || row.status === 'draft') return null;
   let s = null;
@@ -122,7 +125,7 @@ function liveView(row) {
       meta_description: s.meta_description || '',
       share_image: s.share_image || '',
       content: s.content || '',
-      tags: Array.isArray(s.tags) ? s.tags : [],
+      tags: null,
     };
   }
   return {
@@ -159,7 +162,7 @@ export async function loadLookups(DB) {
   };
 }
 
-// Fill in tags for snapshot-less views from the live article_tags rows.
+// Fill in each view's tags from the live article_tags rows.
 async function resolveTags(DB, views) {
   for (const v of views) {
     if (v.tags !== null) continue;

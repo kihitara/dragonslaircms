@@ -45,8 +45,9 @@
 	}
 	// No "vars" block is needed: the site title, tagline, canonical URL and email
 	// "From" address are all set in Admin → Settings and stored in the database.
-	// (You may still add a "vars" block with SITE_TITLE / SITE_TAGLINE / SITE_URL
-	// / SITE_EMAIL_FROM as fallbacks used before those settings are saved.)
+	// (You may still add a "vars" block with SITE_TITLE / SITE_URL / SITE_EMAIL_FROM
+	// as fallbacks used before those settings are saved. There is no SITE_TAGLINE —
+	// the tagline is only ever the "org_tagline" setting.)
 	//
 	// No secrets are required either: the Worker mints its own session-signing
 	// secrets on first run and stores them in the database. To pin or rotate them

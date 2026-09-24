@@ -455,7 +455,7 @@ async function replace(request, env, user) {
     httpMetadata: { contentType: file.type || contentTypeForKey(key) },
   });
   await logActivity(env.DB, user, 'replaced', 'media', key);
-  return redirect('/admin/media?' + backParams + 'ok=' + encodeURIComponent('Replaced ' + key + ' — the URL is unchanged, so it updates everywhere it is used.'));
+  return redirect('/admin/media?' + backParams + 'ok=' + encodeURIComponent('Replaced ' + key + ' — the URL is unchanged, so every reference now points at the new file. Images are cached hard, so browsers that already have the old one may need a refresh to see it.'));
 }
 
 // Re-tag a file ('' = Unfiled). Only the site_config map changes — never R2.

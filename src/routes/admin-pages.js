@@ -103,6 +103,7 @@ function pageSnapshot(p, updatedAt) {
     slug: p.slug, title: p.title, blocks: p.blocks || '[]',
     meta_title: p.meta_title || null, meta_description: p.meta_description || null,
     share_image: p.share_image || null, hidden: p.hidden ? 1 : 0, full_width: p.full_width ? 1 : 0,
+    corrections_disabled: p.corrections_disabled ? 1 : 0,
     updated_at: updatedAt || null,
   });
 }
@@ -218,11 +219,14 @@ async function revertToPublished(env, user, id) {
   let snap;
   try { snap = JSON.parse(pg.published_snapshot); }
   catch { return redirect(`/admin/pages/${id}?err=` + encodeURIComponent('Published snapshot is invalid.')); }
+  // Snapshots taken before this field was frozen don't carry it, so fall back to
+  // what the page has now rather than silently switching corrections back on.
+  const correctionsOff = (snap.corrections_disabled ?? pg.corrections_disabled) ? 1 : 0;
   await env.DB.prepare(
     `UPDATE pages SET slug = ?, title = ?, status = 'published', blocks = ?, meta_title = ?, meta_description = ?,
-     share_image = ?, hidden = ?, full_width = ?, updated_at = datetime('now') WHERE id = ?`
+     share_image = ?, hidden = ?, full_width = ?, corrections_disabled = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(snap.slug, snap.title, snap.blocks || '[]', snap.meta_title || null, snap.meta_description || null,
-    snap.share_image || null, snap.hidden ? 1 : 0, snap.full_width ? 1 : 0, id).run();
+    snap.share_image || null, snap.hidden ? 1 : 0, snap.full_width ? 1 : 0, correctionsOff, id).run();
   await saveRevision(env.DB, 'page', id, snap, (snap.title || 'Untitled') + ' (reverted to published)', user);
   await logActivity(env.DB, user, 'reverted', 'page', snap.title || snap.slug);
   return redirect(`/admin/pages/${id}?m=reverted`);

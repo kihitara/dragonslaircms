@@ -7,11 +7,14 @@ import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 import { getSiteSettings, logActivity } from '../db.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
-import { sendTemplatedEmail, getSiteName } from '../email.js';
-import { hashPassword } from '../auth.js';
+import { sendTemplatedEmail, getSiteName, emailEnabled } from '../email.js';
+import { hashPassword, passwordError, roleAtLeast, destroyReaderSessionsStmt } from '../auth.js';
 import { logReaderActivity } from './reader.js';
 
 export async function handleReaders(request, env, url, user) {
+  // Readers are accounts, and only admins manage accounts. Anybody below gets
+  // the admin 404, the same answer as a page that doesn't exist.
+  if (!roleAtLeast(user, 'admin')) return null;
   const path = url.pathname.replace(/\/$/, '');
 
   if (path === '/admin/readers' && request.method === 'GET') {
@@ -54,12 +57,12 @@ async function setPasswordForm(env, user, id, error = '') {
     <form method="post" action="/admin/readers/${reader.id}/password" style="max-width:420px">
       <div class="field">
         <label for="password">New password</label>
-        <input type="password" id="password" name="password" required minlength="8" autofocus autocomplete="new-password">
-        <p class="hint">At least 8 characters.</p>
+        <input type="password" id="password" name="password" required minlength="12" maxlength="256" autofocus autocomplete="new-password">
+        <p class="hint">At least 12 characters.</p>
       </div>
       <div class="field">
         <label for="confirm">Confirm new password</label>
-        <input type="password" id="confirm" name="confirm" required minlength="8" autocomplete="new-password">
+        <input type="password" id="confirm" name="confirm" required minlength="12" maxlength="256" autocomplete="new-password">
       </div>
       <button class="btn" type="submit">Set password</button>
     </form>`;
@@ -73,13 +76,15 @@ async function setPassword(request, env, user, id) {
   const form = await request.formData();
   const password = String(form.get('password') || '');
   const confirm = String(form.get('confirm') || '');
-  if (password.length < 8) return setPasswordForm(env, user, id, 'Password must be at least 8 characters.');
   if (password !== confirm) return setPasswordForm(env, user, id, 'The two passwords do not match.');
+  const pwErr = await passwordError(password);
+  if (pwErr) return setPasswordForm(env, user, id, pwErr);
 
   const hash = await hashPassword(password);
-  await DB.prepare('UPDATE reader_accounts SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?')
-    .bind(hash, id).run();
-  await DB.prepare('DELETE FROM reader_sessions WHERE reader_account_id = ?').bind(id).run();
+  await DB.batch([
+    DB.prepare('UPDATE reader_accounts SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?').bind(hash, id),
+    destroyReaderSessionsStmt(DB, id),
+  ]);
   await logActivity(DB, user, 'set the password for', 'reader', reader.username);
   await logReaderActivity(DB, id, 'password set by an administrator');
   return redirect('/admin/readers?ok=' + encodeURIComponent(`Password updated for ${reader.username}.`));
@@ -91,6 +96,7 @@ async function listReaders(request, env, url, user) {
   const DB = env.DB;
   const filter = FILTERS.includes(url.searchParams.get('status')) ? url.searchParams.get('status') : 'all';
   const settings = await getSiteSettings(DB);
+  const emailOn = await emailEnabled(env);
 
   const pageSize = await getPageSize(DB, user, url);
   const page = currentPage(url);
@@ -124,11 +130,17 @@ async function listReaders(request, env, url, user) {
 
   const rows = readers.map((r) => {
     const actions = [];
-    if (r.status !== 'approved') actions.push(btn(r.id, 'approve', 'Approve', 'btn-green'));
+    // An address nobody has confirmed isn't something to vouch for, so there
+    // is no Approve until the reader has followed their link (mail on only).
+    if (r.status !== 'approved') {
+      actions.push(r.email_verified || !emailOn
+        ? btn(r.id, 'approve', 'Approve', 'btn-green')
+        : '<span class="muted small">Waiting for them to confirm their address</span>');
+    }
     if (r.status !== 'rejected') actions.push(btn(r.id, 'reject', 'Reject'));
     actions.push(`<a class="btn btn-small btn-secondary" href="/admin/readers/${r.id}/password">Set password</a>`);
     actions.push(`<a class="btn btn-small btn-secondary" href="/admin/readers/${r.id}/logs">Logs</a>`);
-    actions.push(btn(r.id, 'delete', 'Delete', 'btn-danger', 'Permanently delete this reader account, its comments links and subscription?'));
+    actions.push(btn(r.id, 'delete', 'Delete', 'btn-danger', 'Permanently delete this reader account? Their comments stay, without their name. Their subscription and notification settings go.'));
     return `
     <tr>
       <td class="cell-main"><strong>${escapeHtml(r.username)}</strong></td>
@@ -142,7 +154,10 @@ async function listReaders(request, env, url, user) {
   }).join('');
 
   const okMsg = url.searchParams.get('ok');
-  const flash = okMsg ? `<div class="notice notice-green">${escapeHtml(okMsg)}</div>` : '';
+  // A fixed sentence per code: no message text is read from the URL.
+  const errMsg = { unconfirmed: "That reader hasn't confirmed their email address yet, so they can't be approved." }[url.searchParams.get('err')] || '';
+  const flash = (okMsg ? `<div class="notice notice-green">${escapeHtml(okMsg)}</div>` : '')
+    + (errMsg ? `<div class="notice notice-error">${escapeHtml(errMsg)}</div>` : '');
 
   const content = `
     <div class="page-head"><h1>Readers</h1><div class="actions">${tabs}</div></div>
@@ -202,7 +217,7 @@ async function readerLogsPage(env, url, user, id) {
 
 async function readerAction(env, id, action, user) {
   const DB = env.DB;
-  const reader = await DB.prepare('SELECT id, username, email FROM reader_accounts WHERE id = ?').bind(id).first();
+  const reader = await DB.prepare('SELECT id, username, email, email_verified FROM reader_accounts WHERE id = ?').bind(id).first();
   if (!reader) return redirect('/admin/readers');
 
   if (action === 'delete') {
@@ -214,7 +229,15 @@ async function readerAction(env, id, action, user) {
   }
 
   const status = action === 'approve' ? 'approved' : 'rejected';
-  await DB.prepare('UPDATE reader_accounts SET status = ? WHERE id = ?').bind(status, id).run();
+  if (status === 'approved' && !reader.email_verified && await emailEnabled(env)) {
+    return redirect('/admin/readers?err=unconfirmed');
+  }
+  // Rejecting ends every session in the same batch, so approving them again
+  // later can't bring an old session back to life.
+  await DB.batch([
+    DB.prepare('UPDATE reader_accounts SET status = ? WHERE id = ?').bind(status, id),
+    ...(status === 'rejected' ? [destroyReaderSessionsStmt(DB, id)] : []),
+  ]);
 
   await sendTemplatedEmail(env, status === 'approved' ? 'account_approved' : 'account_rejected', reader.email, {
     site_name: await getSiteName(env),

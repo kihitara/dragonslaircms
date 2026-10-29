@@ -8,7 +8,7 @@ A self-contained CMS on Cloudflare Workers: one Worker serves the public site an
 |---|---|
 | Compute | Cloudflare Workers, plain JavaScript ES modules, no build step |
 | Database | D1 — hand-written SQL, no ORM |
-| Media | R2, served by the Worker at `/media/<key>` |
+| Media | R2, served by the Worker at `/media/<key>`. An upload's type is decided by its bytes, only admins can upload SVG or HTML, and every file is served sandboxed so it can't run script |
 | Email | Cloudflare Workers `send_email` binding (optional; needs Workers Paid + a verified sender) |
 | Styling | CSS custom properties generated at runtime (`/theme.css`) from design tokens in D1 |
 
@@ -62,7 +62,7 @@ Open your Worker's URL and go to **`/admin`** — with an empty database it redi
 Then, in **Admin → Settings**, set:
 
 - **Organisation name** and **tagline** — shown in the header, footer and titles.
-- **Site URL (canonical)** — your deployed origin (`https://<worker>.<subdomain>.workers.dev` or a custom domain). Used for canonical tags, the RSS feed, the sitemap and email links.
+- **Site URL (canonical)** — your deployed origin (`https://<worker>.<subdomain>.workers.dev` or a custom domain), with nothing after the domain. Used for canonical tags, the RSS feed, the sitemap and email links. It must start `https://`, email stays off until it is set, and only an admin can change it, because it decides where password-reset links point.
 - **Email “From” address** — only if you're using email (see below).
 - **Home page** — serve a static `home` page (default) or a blog-style **article feed** at the site root. For a pure blog, choose the feed and you never need a `home` page.
 - Logo/favicon, colours, fonts, navigation, footer, pages, articles, email copy — all editable in the admin.
@@ -121,7 +121,7 @@ Outgoing email uses the Cloudflare `send_email` binding (`EMAIL` in `wrangler.js
 **No-email mode (Workers Free plan / no domain):** turn off **“Send outgoing email”** in **Admin → Settings** (and optionally remove the `send_email` block from `wrangler.jsonc`). The CMS detects this and adapts so nothing is left half-working:
 
 - **Admin notifications** (new comment / correction / registration) → shown in-app via the sidebar badges and dashboard instead of emailed.
-- **Reader self-registration** → skips email verification; new accounts land in the **Admin → Readers** approval queue (or are usable immediately if approval is off).
+- **Reader self-registration** → skips email verification; new accounts always land in the **Admin → Readers** approval queue, whatever the approval setting says, because with no email there is no link to prove an address.
 - **Password resets** → the email-based “Forgot password?” links are hidden. Admins reset each other from **Admin → Users**; a reader is reset from **Admin → Readers → Set password**.
 - **Reader convenience emails** (comment-reply / new-article) → simply not sent.
 

@@ -15,7 +15,7 @@
 //     deactivate their own account
 // Passwords are hashed with hashPassword() and never logged anywhere.
 
-import { hashPassword, roleAtLeast } from '../auth.js';
+import { hashPassword, verifyPassword, passwordError, roleAtLeast, destroyUserSessionsStmt } from '../auth.js';
 import { logActivity } from '../db.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
 import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
@@ -213,9 +213,15 @@ function formHtml(target, user, url) {
         <label for="password">${isNew ? 'Password' : 'Reset password'}</label>
         ${isNew
           ? `<input type="text" id="password" name="password" value="${escapeAttr(generatePassword())}" autocomplete="off" required>
-             <div class="hint">Pre-generated — copy it and share it with the user, or type your own (at least 8 characters).</div>`
-          : `<input type="password" id="password" name="password" autocomplete="new-password" placeholder="Leave blank to keep the current password">`}
+             <div class="hint">Pre-generated — copy it and share it with the user, or type your own (at least 12 characters).</div>`
+          : `<input type="password" id="password" name="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="Leave blank to keep the current password">`}
       </div>
+      ${isSelf ? `
+      <div class="field">
+        <label for="current_password">Your current password</label>
+        <input type="password" id="current_password" name="current_password" autocomplete="current-password">
+        <div class="hint">This is you. Changing your own email address or password needs your current password.</div>
+      </div>` : ''}
       <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
         <button class="btn" type="submit">${isNew ? 'Create user' : 'Save user'}</button>
         <a class="btn btn-secondary" href="/admin/users">Cancel</a>
@@ -232,7 +238,8 @@ async function create(request, env, user) {
   const back = '/admin/users/new';
 
   if (!data.name || !data.email) return redirect(back + '?err=' + encodeURIComponent('Name and email are required.'));
-  if (password.length < 8) return redirect(back + '?err=' + encodeURIComponent('Password must be at least 8 characters.'));
+  const createPwErr = await passwordError(password);
+  if (createPwErr) return redirect(back + '?err=' + encodeURIComponent(createPwErr));
   const clash = await DB.prepare('SELECT id FROM users WHERE email = ?').bind(data.email).first();
   if (clash) return redirect(back + '?err=' + encodeURIComponent('A user with that email already exists.'));
 
@@ -251,26 +258,48 @@ async function update(request, env, user, target) {
   const back = `/admin/users/${target.id}`;
 
   if (!data.name || !data.email) return redirect(back + '?err=' + encodeURIComponent('Name and email are required.'));
-  if (password && password.length < 8) return redirect(back + '?err=' + encodeURIComponent('Password must be at least 8 characters.'));
+  if (password) {
+    const pwErr = await passwordError(password);
+    if (pwErr) return redirect(back + '?err=' + encodeURIComponent(pwErr));
+  }
   const clash = await DB.prepare('SELECT id FROM users WHERE email = ?').bind(data.email).first();
   if (clash && clash.id !== target.id) return redirect(back + '?err=' + encodeURIComponent('A user with that email already exists.'));
 
-  if (target.id === user.id) {
+  const isSelf = target.id === user.id;
+  if (isSelf) {
     // No self-lockout: keep own role and stay active regardless of the form
     // (the fields are disabled in the UI, this enforces it server-side).
     data.role = target.role;
     data.active = 1;
+    // Your own email address and password are how the account is signed in to
+    // and recovered, so changing either needs your current password. A session
+    // left open on a shared machine shouldn't be enough to take the account.
+    if (data.email !== target.email || password) {
+      const current = String(form.get('current_password') || '');
+      if (!(await verifyPassword(current, target.password_hash))) {
+        return redirect(back + '?err=' + encodeURIComponent('Your current password was not correct, so nothing was changed.'));
+      }
+    }
   } else if (target.role === 'admin' && target.active && (data.role !== 'admin' || !data.active)
       && (await countActiveAdmins(DB)) <= 1) {
     return redirect(back + '?err=' + encodeURIComponent('This is the only active admin — promote another admin first.'));
   }
 
-  await DB.prepare('UPDATE users SET email = ?, name = ?, role = ?, active = ? WHERE id = ?')
-    .bind(data.email, data.name, data.role, data.active, target.id).run();
+  // A new password or a deactivation ends the account's sessions in the same
+  // batch, so a stolen session dies with the change and reactivating the
+  // account later can't bring an old one back. Your own current session stays.
+  const ops = [
+    DB.prepare('UPDATE users SET email = ?, name = ?, role = ?, active = ? WHERE id = ?')
+      .bind(data.email, data.name, data.role, data.active, target.id),
+  ];
   if (password) {
-    await DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-      .bind(await hashPassword(password), target.id).run();
+    ops.push(DB.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?')
+      .bind(await hashPassword(password), target.id));
   }
+  if (password || (!data.active && target.active)) {
+    ops.push(destroyUserSessionsStmt(DB, target.id, isSelf ? user.sessionId : null));
+  }
+  await DB.batch(ops);
   await logActivity(DB, user, 'updated', 'user', `${data.name} (${data.email})`);
   return redirect('/admin/users?ok=' + encodeURIComponent(`User “${data.name}” saved.`));
 }

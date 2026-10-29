@@ -12,6 +12,15 @@
 //
 // Also exports the small key/content-type helpers shared by the admin media
 // and people routes (which upload into the same bucket).
+//
+// Every file is served under a sandboxing Content-Security-Policy, so an SVG or
+// HTML file opened directly can't run script or act as the site: the sandbox
+// gives it an opaque origin. Anything that isn't an image, video, PDF, HTML
+// page or font is served as a download.
+
+import { servedInline } from '../sniff.js';
+
+export const MEDIA_CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox";
 
 const TYPES = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
@@ -112,10 +121,20 @@ export async function handleMediaFile(request, env, url) {
   if (!obj) return null;
 
   const headers = new Headers();
-  obj.writeHttpMetadata(headers); // stored contentType (set at upload time)
+  obj.writeHttpMetadata(headers); // stored contentType (sniffed at upload time)
   if (!headers.get('Content-Type')) headers.set('Content-Type', contentTypeForKey(key));
+  if (!servedInline(headers.get('Content-Type'))) {
+    const name = key.split('/').pop();
+    headers.set('Content-Type', 'application/octet-stream');
+    headers.set('Content-Disposition', `attachment; filename="${name.replace(/[^\w.-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  }
+  headers.set('Content-Length', String(obj.size));
   headers.set('ETag', obj.httpEtag);
   headers.set('Cache-Control', cacheControlFor(key, headers.get('Content-Type')));
   headers.set('X-Content-Type-Options', 'nosniff'); // never sniff a file into something executable
+  headers.set('Content-Security-Policy', MEDIA_CSP);
+  // The embed block shows an uploaded PDF or HTML page in an iframe on this
+  // site, so media may be framed by this site and no other.
+  headers.set('X-Frame-Options', 'SAMEORIGIN');
   return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
 }

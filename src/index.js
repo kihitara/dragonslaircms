@@ -17,42 +17,15 @@ import { defaultTokens, tokensToCss, surfacesToCss, fontFacesToCss } from './tok
 import { getThemeTokens, getSiteConfig, getSiteSettings } from './db.js';
 import { loadChrome } from './site.js';
 import { resolveSessionSecrets } from './secrets.js';
+import { siteUrlError, normaliseSiteUrl } from './site-url.js';
+import { withSecurityHeaders, crossSiteRequest } from './csp.js';
+import { serverError } from './errors.js';
 import { sitePage, escapeHtml, html } from './templates/base.js';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const path = url.pathname;
-
-    try {
-      // Generated theme stylesheet: tokens + surfaces + @font-face from D1.
-      if (path === '/theme.css') return themeCss(env);
-
-      // Public, read-only emoticon list for the comment editor's picker
-      // (the admin list endpoint is behind auth).
-      if (path === '/emoticons.json') return emoticonsJson(env);
-
-      // Resolve the admin-settable site URL / email-from and the session
-      // secrets once per request, and hand every handler a copy of env carrying
-      // the effective values, so the wrangler.jsonc vars become fallbacks
-      // rather than the only source.
-      const renv = await resolveEnv(env, url);
-
-      if (path === '/admin' || path.startsWith('/admin/')) {
-        return await handleAdmin(request, renv, url);
-      }
-
-      const candidates = [handleDiscovery, handleApi, handleReader, handleMediaFile, handleSearch, handlePublicArticles, handlePublicPeople, handlePublicPage];
-      for (const handler of candidates) {
-        const res = await handler(request, renv, url);
-        if (res) return res;
-      }
-
-      return await notFound(request, renv, url);
-    } catch (err) {
-      console.error('Unhandled error:', err.stack || err);
-      return html('<h1>Something went wrong</h1><p>Please try again shortly.</p>', { status: 500 });
-    }
+    return withSecurityHeaders(await route(request, env, url), url);
   },
 
   // Cron Trigger (see triggers.crons in wrangler.jsonc): publish any articles
@@ -67,20 +40,63 @@ export default {
   },
 };
 
+async function route(request, env, url) {
+  const path = url.pathname;
+
+  // Anything that can change state must come from a page on this site, and
+  // is refused before any handler runs.
+  if (crossSiteRequest(request, url)) {
+    return new Response('Forbidden', { status: 403, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+
+  try {
+    // Generated theme stylesheet: tokens + surfaces + @font-face from D1.
+    if (path === '/theme.css') return await themeCss(env);
+
+    // Public, read-only emoticon list for the comment editor's picker
+    // (the admin list endpoint is behind auth).
+    if (path === '/emoticons.json') return await emoticonsJson(env);
+
+    // Resolve the admin-settable site URL / email-from and the session
+    // secrets once per request, and hand every handler a copy of env carrying
+    // the effective values, so the wrangler.jsonc vars become fallbacks
+    // rather than the only source.
+    const renv = await resolveEnv(env);
+
+    if (path === '/admin' || path.startsWith('/admin/')) {
+      return await handleAdmin(request, renv, url);
+    }
+
+    const candidates = [handleDiscovery, handleApi, handleReader, handleMediaFile, handleSearch, handlePublicArticles, handlePublicPeople, handlePublicPage];
+    for (const handler of candidates) {
+      const res = await handler(request, renv, url);
+      if (res) return res;
+    }
+
+    return await notFound(request, renv, url);
+  } catch (err) {
+    console.error('Unhandled error:', request.method, path, err?.stack || err);
+    return serverError();
+  }
+}
+
 // Effective env: overlay the admin-settable site_url / email_from (site_settings)
 // and the session secrets (minted into site_config when not supplied, see
 // secrets.js) onto the wrangler vars, which act as fallbacks. Returns a
 // per-request copy so the shared env object is never mutated (no cross-request
 // bleed). SITE_URL is stripped of any trailing slash so `${SITE_URL}/path`
 // never doubles up.
-async function resolveEnv(env, url = null) {
+async function resolveEnv(env) {
   let s = {};
   try { s = await getSiteSettings(env.DB); } catch { s = {}; }
-  // Falling back to the request's own origin keeps every absolute link usable on
-  // a deployment that hasn't set a canonical URL yet — including the ones in
-  // email, where a relative path is simply broken. The cron has no request, so
-  // scheduled-publish notifications still need the setting.
-  const siteUrl = ((s.site_url || '').trim() || env.SITE_URL || (url ? url.origin : '')).replace(/\/+$/, '');
+  // The site URL comes from the setting, or the wrangler var, and never from
+  // the host a request arrived on: links in email are built from it, and a link
+  // assembled from whatever host answered is a link that can be aimed somewhere
+  // else. A stored value that fails the rule counts as unset. With no site URL,
+  // email stays off (emailEnabled) and public pages fall back to the request's
+  // origin themselves where they need an absolute address (discovery, export).
+  const candidate = normaliseSiteUrl((s.site_url || '').trim() || env.SITE_URL || '');
+  const siteUrl = siteUrlError(candidate) ? '' : candidate;
   const emailFrom = (s.email_from || '').trim() || env.SITE_EMAIL_FROM;
   const secrets = await resolveSessionSecrets(env);
   return { ...env, ...secrets, SITE_URL: siteUrl, SITE_EMAIL_FROM: emailFrom };

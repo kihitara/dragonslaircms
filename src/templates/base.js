@@ -13,6 +13,35 @@ export function escapeAttr(str) {
   return escapeHtml(str);
 }
 
+// A link target typed by staff (navigation, footer, buttons, link lists) is
+// only ever http(s), mailto, tel, a path on this site or a #fragment. Anything
+// else, such as javascript:, becomes '#'. Checked on save as well, but checked
+// here too so a value stored before that check can never reach a page.
+// Control characters and whitespace are stripped first, because browsers
+// ignore them inside a scheme ("java\tscript:").
+export function safeUrl(url) {
+  const v = String(url ?? '').replace(/[\u0000-\u0020\u007f]/g, '');
+  if (!v) return '';
+  if (v.startsWith('#')) return v;
+  // A path on this site, but never //host or /\host, which browsers read as
+  // another site.
+  if (v.startsWith('/') || v.startsWith('\\')) {
+    return v.startsWith('/') && !v.startsWith('//') && !v.startsWith('/\\') ? v : '#';
+  }
+  if (/^(https?:|mailto:|tel:)/i.test(v)) return v;
+  // A bare relative path with no scheme at all ("about", "page?x=1") is safe too.
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) return v;
+  return '#';
+}
+
+// Whether a typed link target is one safeUrl() would keep as it is. Used by
+// the savers so a bad link is refused with a message instead of silently
+// rewritten.
+export function isSafeUrl(url) {
+  const v = String(url ?? '').trim();
+  return !v || safeUrl(v) === v.replace(/[\u0000-\u0020\u007f]/g, '');
+}
+
 export function formatDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -64,13 +93,13 @@ export function sitePage({ env, title, description, canonical, shareImage, nav =
   const navHtml = nav.map((item) => {
     const kids = (Array.isArray(item.children) ? item.children : []).filter((c) => c && c.label);
     if (!kids.length) {
-      return `<a href="${escapeAttr(item.href)}"${item.active ? ' class="active"' : ''}>${escapeHtml(item.label)}</a>`;
+      return `<a href="${escapeAttr(safeUrl(item.href))}"${item.active ? ' class="active"' : ''}>${escapeHtml(item.label)}</a>`;
     }
     const toggle = item.href
-      ? `<a class="nav-drop-toggle${item.active ? ' active' : ''}" href="${escapeAttr(item.href)}" aria-haspopup="true" aria-expanded="false">${escapeHtml(item.label)}<span class="nav-caret" aria-hidden="true">▾</span></a>`
+      ? `<a class="nav-drop-toggle${item.active ? ' active' : ''}" href="${escapeAttr(safeUrl(item.href))}" aria-haspopup="true" aria-expanded="false">${escapeHtml(item.label)}<span class="nav-caret" aria-hidden="true">▾</span></a>`
       : `<button class="nav-drop-toggle${item.active ? ' active' : ''}" type="button" aria-haspopup="true" aria-expanded="false">${escapeHtml(item.label)}<span class="nav-caret" aria-hidden="true">▾</span></button>`;
     const menu = kids.map((c) =>
-      `<a href="${escapeAttr(c.href)}">${escapeHtml(c.label)}</a>`
+      `<a href="${escapeAttr(safeUrl(c.href))}">${escapeHtml(c.label)}</a>`
     ).join('');
     // Dropdowns always render closed — on every page, desktop and mobile. Only a
     // hover/click opens them (JS/CSS); navigating reloads the page, so a fresh
@@ -81,7 +110,7 @@ export function sitePage({ env, title, description, canonical, shareImage, nav =
   const footerCols = (footer?.columns || []).map((col) => `
     <div>
       <h4>${escapeHtml(col.title || '')}</h4>
-      <ul>${(col.links || []).map((l) => `<li><a href="${escapeAttr(l.href)}">${escapeHtml(l.label)}</a></li>`).join('')}</ul>
+      <ul>${(col.links || []).map((l) => `<li><a href="${escapeAttr(safeUrl(l.href))}">${escapeHtml(l.label)}</a></li>`).join('')}</ul>
     </div>`).join('');
 
   // RSS autodiscovery — public pages only (this shell), so feed readers and
@@ -141,7 +170,7 @@ const ADMIN_NAV = [
   { group: 'Community' },
   { href: '/admin/comments', label: 'Comments', badge: 'comments' },
   { href: '/admin/corrections', label: 'Corrections', badge: 'corrections' },
-  { href: '/admin/readers', label: 'Readers', badge: 'readers' },
+  { href: '/admin/readers', label: 'Readers', badge: 'readers', minRole: 'admin' },
   { group: 'Design', minRole: 'publisher' },
   { href: '/admin/branding', label: 'Branding', minRole: 'publisher' },
   { href: '/admin/palette', label: 'Palette', minRole: 'publisher' },
@@ -151,7 +180,7 @@ const ADMIN_NAV = [
   { href: '/admin/footer', label: 'Footer', minRole: 'publisher' },
   { group: 'System', minRole: 'publisher' },
   { href: '/admin/settings', label: 'Settings', minRole: 'publisher' },
-  { href: '/admin/emails', label: 'Email templates', minRole: 'publisher' },
+  { href: '/admin/emails', label: 'Email templates', minRole: 'admin' },
   { href: '/admin/users', label: 'Users', minRole: 'admin' },
 ];
 
@@ -210,7 +239,7 @@ ${headHtml({ title: `${title} — Admin`, favicon: brand.logo, extraHead: `<link
   ${sidebarNav(user, path)}
   <div class="sidebar-footer">
     ${escapeHtml(user.name)} <span class="badge">${escapeHtml(user.role)}</span><br>
-    <a href="/" target="_blank">View site ↗</a> · <a href="/admin/logout">Log out</a>
+    <a href="/" target="_blank">View site ↗</a> · <form method="post" action="/admin/logout" class="inline-form"><button type="submit" class="link-button">Log out</button></form>
     <button class="theme-toggle" type="button" aria-label="Toggle theme" style="margin-top:0.5rem">☾</button>
   </div>
 </aside>
@@ -302,12 +331,12 @@ export function adminResetPage({ token = '', error = '', invalid = false, brandi
       <input type="hidden" name="token" value="${escapeAttr(token)}">
       <div class="field">
         <label for="password">New password</label>
-        <input type="password" id="password" name="password" required minlength="8" autofocus autocomplete="new-password">
-        <p class="hint">At least 8 characters.</p>
+        <input type="password" id="password" name="password" required minlength="12" autofocus autocomplete="new-password">
+        <p class="hint">At least 12 characters.</p>
       </div>
       <div class="field">
         <label for="confirm">Confirm new password</label>
-        <input type="password" id="confirm" name="confirm" required minlength="8" autocomplete="new-password">
+        <input type="password" id="confirm" name="confirm" required minlength="12" autocomplete="new-password">
       </div>
       <button class="btn" type="submit" style="width:100%;justify-content:center">Set new password</button>
     </form>`, branding);
@@ -330,8 +359,8 @@ export function adminSetupPage({ error = '', name = '', email = '', branding = {
       </div>
       <div class="field">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="8" autocomplete="new-password">
-        <p class="hint">At least 8 characters.</p>
+        <input type="password" id="password" name="password" required minlength="12" autocomplete="new-password">
+        <p class="hint">At least 12 characters.</p>
       </div>
       <button class="btn" type="submit" style="width:100%;justify-content:center">Create admin account</button>
     </form>`, branding);

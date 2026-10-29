@@ -15,7 +15,8 @@
 import { logActivity } from '../db.js';
 import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
-import { contentTypeForKey, makeMediaKey } from './media.js';
+import { makeMediaKey } from './media.js';
+import { sniffType, uploadError, nameWithSniffedExt, MAX_UPLOAD_REQUEST } from '../sniff.js';
 import { MEDIA_PICKER_HEAD } from './admin-media.js';
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 
@@ -228,6 +229,11 @@ function formHtml(person, url) {
 
 async function save(request, env, user, existing) {
   const DB = env.DB;
+  const backTo0 = existing ? `/admin/people/${existing.id}` : '/admin/people/new';
+  // The size is checked before the body is read, because a photo can ride along.
+  if (Number(request.headers.get('Content-Length')) > MAX_UPLOAD_REQUEST) {
+    return redirect(backTo0 + '?err=' + encodeURIComponent('That photo is too large. Photos can be up to 8 MB.'));
+  }
   const form = await request.formData();
   const str = (k) => String(form.get(k) ?? '').trim();
 
@@ -247,8 +253,14 @@ async function save(request, env, user, existing) {
   const file = form.get('photo_file');
   if (file && typeof file !== 'string' && file.size) {
     if (!env.MEDIA) return redirect(backTo + '?err=' + encodeURIComponent('No media bucket is configured — paste a URL instead.'));
-    const key = makeMediaKey('people', file.name);
-    await env.MEDIA.put(key, file, { httpMetadata: { contentType: file.type || contentTypeForKey(key) } });
+    // The type comes from the photo's own bytes, never its name or the
+    // browser's say-so, and only images are accepted.
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const sniffed = sniffType(bytes);
+    const problem = uploadError(sniffed, bytes.length, { purpose: 'photo', isAdmin: false });
+    if (problem) return redirect(backTo + '?err=' + encodeURIComponent(problem));
+    const key = makeMediaKey('people', nameWithSniffedExt(file.name, sniffed));
+    await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: sniffed.type } });
     await logActivity(DB, user, 'uploaded', 'media', key);
     photoUrl = '/' + key;
   }

@@ -32,15 +32,31 @@ async function readBody(request) {
 
 // Redirect back to the submitting page with a flag (?commented=1 etc.) and an
 // optional #anchor, dropping any previous query so notices don't stack.
-function backTo(request, flag, hash = '') {
+// A path that starts // or /\ is read by browsers as another site, so it falls
+// back to the home page rather than becoming an open redirect.
+function backTo(request, flag, hash = '', value = '1') {
   let path = '/';
   try { path = new URL(request.headers.get('Referer')).pathname; } catch { /* no/invalid referer */ }
-  return redirect(`${path}?${flag}=1${hash}`);
+  if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/\\')) path = '/';
+  return redirect(`${path}?${flag}=${value}${hash}`);
 }
 
-function fail(request, message, status) {
-  // Form posts get bounced back silently; JSON callers get the error.
-  return isJson(request) ? json({ error: message }, status) : backTo(request, 'error');
+// Form posts go back to the page with a fixed error code that the page turns
+// into a sentence (see community.js); JSON callers get the error.
+function fail(request, message, status, code = '1') {
+  return isJson(request) ? json({ error: message }, status) : backTo(request, 'error', '', code);
+}
+
+// Every public text field has a maximum, enforced here and refused rather than
+// cut. The body cap also bounds the work the comment sanitiser does.
+export const MAX_BODY = 10000;
+export const MAX_NAME = 80;
+export const MAX_EMAIL = 254;
+
+function tooLong(data) {
+  return String(data.body || '').length > MAX_BODY
+    || String(data.anonymous_name || '').trim().length > MAX_NAME
+    || String(data.anonymous_email || '').trim().length > MAX_EMAIL;
 }
 
 export async function handleApi(request, env, url) {
@@ -64,6 +80,7 @@ async function postComment(request, env) {
   const DB = env.DB;
   const data = await readBody(request);
   const articleId = parseInt(data.article_id, 10);
+  if (tooLong(data)) return fail(request, 'too long', 413, 'too_long');
   const body = (data.body || '').trim();
   if (!articleId || !body) return fail(request, 'article_id and body required', 400);
 
@@ -126,6 +143,7 @@ async function postComment(request, env) {
 async function postReply(request, env, commentId) {
   const DB = env.DB;
   const data = await readBody(request);
+  if (tooLong(data)) return fail(request, 'too long', 413, 'too_long');
   const body = (data.body || '').trim();
   if (!body) return fail(request, 'body required', 400);
 
@@ -185,6 +203,7 @@ async function postCorrection(request, env) {
   const data = await readBody(request);
   const entityType = data.entity_type;
   const entityId = parseInt(data.entity_id, 10);
+  if (tooLong(data)) return fail(request, 'too long', 413, 'too_long');
   const body = (data.body || '').trim();
   if (!['article', 'page'].includes(entityType) || !entityId || !body) {
     return fail(request, 'entity_type, entity_id and body required', 400);

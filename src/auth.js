@@ -45,9 +45,66 @@ export async function verifyPassword(password, stored) {
   }
 }
 
+// A hash of a password nobody knows, in the stored form. Signing in to an
+// address with no account checks the password against this instead of
+// returning early, so the response takes as long either way and the form
+// can't be used to ask whether somebody has an account here.
+const DUMMY_HASH =
+  'da9cde319544686abca4db6ec5b28ee2:cf42446e65b92c18c52507905b2cba25a9ed0843434512ceab8ec871c1c43a33';
+
+export const burnTime = (password) => verifyPassword(password, DUMMY_HASH);
+
+// --- Password rules ---
+// Length and the breach list do the work; there are no character-class rules.
+// The maximum is about cost, not strength: PBKDF2 runs over whatever it is
+// given, so the length is checked before anything is hashed. The breach check
+// uses Have I Been Pwned's range API by k-anonymity (only five hex characters
+// of the SHA-1 leave the Worker) and fails open, so an outage there never
+// stops anybody setting a password.
+
+export const PASSWORD_MIN = 12;
+export const PASSWORD_MAX = 256;
+const HIBP_TIMEOUT_MS = 2000;
+
+async function isBreachedPassword(password) {
+  try {
+    const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(password));
+    const h = hex(new Uint8Array(digest)).toUpperCase();
+    const res = await fetch(`https://api.pwnedpasswords.com/range/${h.slice(0, 5)}`, {
+      headers: { 'Add-Padding': 'true', 'User-Agent': 'DragonslairCMS-password-check' },
+      signal: AbortSignal.timeout(HIBP_TIMEOUT_MS),
+    });
+    if (!res.ok) return false;
+    const suffix = h.slice(5);
+    for (const line of (await res.text()).split('\n')) {
+      const [suf, count] = line.trim().split(':');
+      if (suf === suffix && Number(count) > 0) return true;
+    }
+    return false;
+  } catch {
+    return false; // fail open, timeouts included
+  }
+}
+
+// The one place that decides whether a new password is acceptable. Every path
+// that sets one calls it: setup, reset, an admin creating or editing an
+// account, and a reader registering, resetting or changing theirs.
+export async function passwordError(password) {
+  const pw = String(password || '');
+  if (pw.length < PASSWORD_MIN) return `Passwords need to be at least ${PASSWORD_MIN} characters.`;
+  if (pw.length > PASSWORD_MAX) return `Passwords can be at most ${PASSWORD_MAX} characters.`;
+  if (await isBreachedPassword(pw)) {
+    return 'That password has turned up in a known data breach, so it is not safe to use. Please choose a different one.';
+  }
+  return null;
+}
+
 // --- HMAC-signed session cookies ---
 
+// Fails closed: with no secret there is no key, and nothing can be signed or
+// verified. Encoding a missing secret would otherwise give an empty HMAC key.
 async function getSigningKey(secret) {
+  if (!secret) throw new Error('Session secret is not available');
   return crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
 
@@ -59,7 +116,8 @@ async function signSessionId(sessionId, secret) {
 
 async function verifySessionCookie(request, cookieName, secret) {
   const cookieHeader = request.headers.get('Cookie') || '';
-  const match = cookieHeader.match(new RegExp(`${cookieName}=([^;]+)`));
+  // Anchored to the start of a cookie, so `x_dlc_session=` can't stand in.
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${cookieName}=([^;]+)`));
   if (!match) return null;
   const [sessionId, sigHex] = match[1].split('.');
   if (!sessionId || !sigHex) return null;
@@ -108,6 +166,15 @@ export async function destroySession(DB, sessionId) {
   await DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
 }
 
+// Every session for a staff account, or every one but `keepSessionId`. Used
+// when an account is deactivated or its password changes, so reactivating it
+// later can't bring an old session back to life.
+export function destroyUserSessionsStmt(DB, userId, keepSessionId = null) {
+  return keepSessionId
+    ? DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?').bind(userId, keepSessionId)
+    : DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId);
+}
+
 export function clearSessionCookie() {
   return clearCookie(ADMIN_COOKIE);
 }
@@ -132,12 +199,20 @@ export async function getReaderSession(request, DB, secret) {
     `SELECT s.reader_account_id, s.expires_at, r.username, r.email, r.status, r.email_verified
      FROM reader_sessions s JOIN reader_accounts r ON r.id = s.reader_account_id WHERE s.id = ?`
   ).bind(sessionId).first();
-  if (!row || new Date(row.expires_at) < new Date() || row.status !== 'approved') return null;
+  // Status and the address are separate questions, and both must be satisfied.
+  if (!row || new Date(row.expires_at) < new Date() || row.status !== 'approved' || !row.email_verified) return null;
   return { id: row.reader_account_id, username: row.username, email: row.email, sessionId };
 }
 
 export async function destroyReaderSession(DB, sessionId) {
   await DB.prepare('DELETE FROM reader_sessions WHERE id = ?').bind(sessionId).run();
+}
+
+// The reader counterpart of destroyUserSessionsStmt.
+export function destroyReaderSessionsStmt(DB, readerId, keepSessionId = null) {
+  return keepSessionId
+    ? DB.prepare('DELETE FROM reader_sessions WHERE reader_account_id = ? AND id <> ?').bind(readerId, keepSessionId)
+    : DB.prepare('DELETE FROM reader_sessions WHERE reader_account_id = ?').bind(readerId);
 }
 
 export function clearReaderSessionCookie() {

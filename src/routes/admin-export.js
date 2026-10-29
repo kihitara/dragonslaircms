@@ -9,7 +9,7 @@
 // PDF" produces the file. That keeps the whole CMS on the Workers Free plan.
 
 import { renderBlocks } from '../templates/blocks.js';
-import { formatDate } from '../templates/base.js';
+import { formatDate, escapeAttr } from '../templates/base.js';
 import { pageToMarkdown, articleToMarkdown, exportFilename } from '../export-md.js';
 import { buildExportHtml } from '../export-html.js';
 
@@ -122,7 +122,7 @@ export async function exportArticle(env, url, article, kind) {
   // .container + .prose is how the live article page wraps a body — the rich-text
   // rules (inline emoticons, callouts, galleries) are all scoped to .prose.
   const cover = article.cover
-    ? `<figure class="export-cover"><img src="${article.cover}" alt=""></figure>`
+    ? `<figure class="export-cover"><img src="${escapeAttr(article.cover)}" alt=""></figure>`
     : '';
   const doc = await buildExportHtml(env, {
     title: article.title,

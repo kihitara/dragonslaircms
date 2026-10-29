@@ -6,6 +6,7 @@
 import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 import { logActivity } from '../db.js';
+import { roleAtLeast } from '../auth.js';
 import { sendTemplatedEmail, getSiteName } from '../email.js';
 import { articlePath, nl2br } from '../community.js';
 import { sanitizeCommentHtml } from '../sanitize.js';
@@ -16,6 +17,7 @@ const EDITOR_HEAD = '<link rel="stylesheet" href="/css/wysiwyg.css"><script src=
 // Full comment/reply body for the moderation view. body_format 'html' is
 // already sanitised (on write) — emit raw; otherwise nl2br(escapeHtml()).
 function renderBody(row) {
+  if (row.body_format === 'removed') return '<em class="muted">Removed by its author. Kept because others replied.</em>';
   return row.body_format === 'html' ? String(row.body || '') : nl2br(row.body);
 }
 
@@ -27,6 +29,9 @@ export async function handleComments(request, env, url, user) {
   }
 
   if (request.method === 'POST') {
+    // Editors moderate (approve, reject, reply); deleting needs a publisher.
+    // Anybody below gets the admin 404, as for a route that doesn't exist.
+    if (/\/delete$/.test(path) && !roleAtLeast(user, 'publisher')) return null;
     let m = path.match(/^\/admin\/comments\/(\d+)\/(approve|reject|delete|reply)$/);
     if (m) {
       const id = Number(m[1]);
@@ -50,6 +55,7 @@ export async function handleComments(request, env, url, user) {
 const STATUSES = ['all', 'pending', 'approved', 'rejected'];
 
 async function listComments(request, env, url, user) {
+  const canDelete = roleAtLeast(user, 'publisher');
   const DB = env.DB;
   const filter = STATUSES.includes(url.searchParams.get('status')) ? url.searchParams.get('status') : 'all';
 
@@ -100,7 +106,7 @@ async function listComments(request, env, url, user) {
         </div>
         <div class="comment-body small">${renderBody(rp)}</div>
         <div class="row-actions" style="justify-content:flex-start;margin-top:0.4rem">
-          ${actions} ${actionBtn(`/admin/comments/replies/${rp.id}/delete`, 'Delete', 'btn-danger', 'Delete this reply?')}
+          ${actions} ${canDelete ? actionBtn(`/admin/comments/replies/${rp.id}/delete`, 'Delete', 'btn-danger', 'Delete this reply?') : ''}
         </div>
       </div>`;
   };
@@ -126,7 +132,7 @@ async function listComments(request, env, url, user) {
       <div class="comment-body" style="margin:0.6rem 0">${renderBody(c)}</div>
       <div class="row-actions" style="justify-content:flex-start">
         ${moderation}
-        ${actionBtn(`/admin/comments/${c.id}/delete`, 'Delete', 'btn-danger', 'Delete this comment and its replies?')}
+        ${canDelete ? actionBtn(`/admin/comments/${c.id}/delete`, 'Delete', 'btn-danger', 'Delete this comment and its replies?') : ''}
       </div>
       ${replies ? `<div style="margin-top:0.8rem;padding-left:1rem;border-left:2px solid var(--color-surface-dark)">${replies}</div>` : ''}
       <details style="margin-top:0.8rem">
@@ -150,8 +156,11 @@ async function listComments(request, env, url, user) {
 
 async function moderateComment(env, id, status, user) {
   const DB = env.DB;
-  await DB.prepare(`UPDATE comments SET status = ?, moderated_at = datetime('now') WHERE id = ?`)
-    .bind(status, id).run();
+  // Only a real change of status does anything, so pressing Approve twice (or
+  // approving something already approved) never sends the author a second email.
+  const changed = await DB.prepare(`UPDATE comments SET status = ?, moderated_at = datetime('now') WHERE id = ? AND status <> ?`)
+    .bind(status, id, status).run();
+  if (!changed.meta.changes) return redirect('/admin/comments');
 
   // Email the author — only if they have a reader account and their
   // comment_moderated preference is on (missing row = enabled).
@@ -215,7 +224,8 @@ async function notifyParentAuthor(env, reply) {
 
 async function moderateReply(env, id, status, user) {
   const DB = env.DB;
-  await DB.prepare('UPDATE comment_replies SET status = ? WHERE id = ?').bind(status, id).run();
+  const changed = await DB.prepare('UPDATE comment_replies SET status = ? WHERE id = ? AND status <> ?').bind(status, id, status).run();
+  if (!changed.meta.changes) return redirect('/admin/comments');
 
   if (status === 'approved') {
     const reply = await DB.prepare(

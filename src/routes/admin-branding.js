@@ -10,13 +10,14 @@
 // prefix to the exported handler; handlers do their own sub-path/method routing.
 
 import { roleAtLeast } from '../auth.js';
+import { siteUrlError, normaliseSiteUrl } from '../site-url.js';
 import {
   getThemeTokens, setThemeToken, deleteThemeToken,
   getSiteConfig, setSiteConfig, getSiteSettings, setSiteSetting, logActivity,
 } from '../db.js';
-import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
+import { adminPage, escapeHtml, escapeAttr, redirect, html, isSafeUrl } from '../templates/base.js';
 import {
-  defaultTokens, tokensToCss,
+  defaultTokens, tokensToCss, isValidTokenValue, isValidFontFace,
   SURFACE_KEYS, SURFACE_LABELS, SURFACE_ROLES, defaultSurfaces,
 } from '../tokens.js';
 import {
@@ -189,21 +190,33 @@ export async function handleBranding(request, env, url, user) {
 async function saveBranding(request, env, user) {
   const DB = env.DB;
   const form = await request.formData();
-  const ops = [];
+  // Every value is checked before anything is written; one bad value means
+  // nothing is saved, and the message names it.
+  const writes = [];
+  const bad = [];
   for (const [field, value] of form.entries()) {
     const m = field.match(/^token:([^:]+):(.+)$/);
     if (!m || !TOKEN_GROUPS.has(m[1]) || !TOKEN_NAME.test(m[2])) continue;
     const v = String(value).trim();
-    if (v) ops.push(setThemeToken(DB, m[1], m[2], v)); // empty = leave alone; use Reset to revert
+    if (!v) continue; // empty = leave alone; use Reset to revert
+    if (isValidTokenValue(m[1], v)) writes.push([m[1], m[2], v]);
+    else bad.push(`${m[1]} ${m[2]}`);
   }
   const newName = slugify(form.get('newColorName'));
   if (newName) {
     const light = String(form.get('newColorLight') || '').trim() || '#888888';
     const dark = String(form.get('newColorDark') || '').trim() || light;
-    ops.push(setThemeToken(DB, 'color', newName, light));
-    ops.push(setThemeToken(DB, 'color-dark', newName, dark));
+    if (isValidTokenValue('color', light) && isValidTokenValue('color-dark', dark)) {
+      writes.push(['color', newName, light], ['color-dark', newName, dark]);
+    } else {
+      bad.push(`new colour ${newName}`);
+    }
   }
-  await Promise.all(ops);
+  if (bad.length) {
+    return redirect(backWith('/admin/branding', 'err',
+      `Nothing was saved. These values aren't valid for their kind: ${bad.join(', ')}. Colours are hex, rgb(), hsl() or a colour name; sizes are lengths such as 1100px or 1.5rem; fonts are a list of family names.`));
+  }
+  await Promise.all(writes.map(([grp, name, v]) => setThemeToken(DB, grp, name, v)));
   await logActivity(DB, user, 'updated', 'branding', 'design tokens');
   return redirect(backWith('/admin/branding', 'msg', 'Theme saved. ' + THEME_NOTE));
 }
@@ -342,8 +355,8 @@ async function savePalette(request, env, user) {
   try {
     parsed = JSON.parse(String(form.get('config') || '{}'));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
-  } catch (e) {
-    return redirect(backWith('/admin/palette', 'err', 'Palette invalid: ' + e.message));
+  } catch {
+    return redirect(backWith('/admin/palette', 'err', "The palette couldn't be read, so nothing was saved. Reload the page and try again."));
   }
   const prev = (await getSiteConfig(DB, 'surfaces', {})) || {};
   const roleKeys = SURFACE_ROLES.map(([rk]) => rk);
@@ -422,10 +435,43 @@ async function parsePostedConfig(request) {
     const parsed = JSON.parse(String(form.get('config') || '{}'));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
     return { ok: true, value: parsed, form };
-  } catch (e) {
-    return { ok: false, error: e.message, form };
+  } catch {
+    return { ok: false, form };
   }
 }
+
+// Navigation and footer: check the shape the templates read, so a malformed
+// save can't break every public page, and that every link is a safe target.
+// Returns a sentence describing the problem, or null.
+const isText = (v) => v === undefined || v === null || typeof v === 'string';
+function navConfigError(value) {
+  const items = value.items;
+  if (items !== undefined && !Array.isArray(items)) return 'The menu items must be a list.';
+  for (const item of items || []) {
+    if (!item || typeof item !== 'object' || !isText(item.label) || !isText(item.href)) return 'Each menu item needs a label and a link.';
+    if (!isSafeUrl(item.href)) return `The link for "${item.label || 'an item'}" isn't allowed. Use a path on this site, an https:// address, mailto: or tel:.`;
+    if (item.children !== undefined && !Array.isArray(item.children)) return 'Child links must be a list.';
+    for (const c of item.children || []) {
+      if (!c || typeof c !== 'object' || !isText(c.label) || !isText(c.href)) return 'Each child link needs a label and a link.';
+      if (!isSafeUrl(c.href)) return `The link for "${c.label || 'a child item'}" isn't allowed. Use a path on this site, an https:// address, mailto: or tel:.`;
+    }
+  }
+  return null;
+}
+function footerConfigError(value) {
+  const cols = value.columns;
+  if (cols !== undefined && !Array.isArray(cols)) return 'The footer columns must be a list.';
+  for (const col of cols || []) {
+    if (!col || typeof col !== 'object' || !isText(col.title)) return 'Each footer column needs a title.';
+    if (col.links !== undefined && !Array.isArray(col.links)) return 'Footer links must be a list.';
+    for (const l of col.links || []) {
+      if (!l || typeof l !== 'object' || !isText(l.label) || !isText(l.href)) return 'Each footer link needs a label and a link.';
+      if (!isSafeUrl(l.href)) return `The link for "${l.label || 'a footer link'}" isn't allowed. Use a path on this site, an https:// address, mailto: or tel:.`;
+    }
+  }
+  return null;
+}
+const CONFIG_CHECKS = { nav: navConfigError, footer: footerConfigError };
 
 async function configSection(request, env, url, user, { path, key, schema, fallback, title, intro, savedNote }) {
   const gate = requirePublisher(env, user, path); if (gate) return gate;
@@ -434,7 +480,9 @@ async function configSection(request, env, url, user, { path, key, schema, fallb
 
   if (request.method === 'POST') {
     const parsed = await parsePostedConfig(request);
-    if (!parsed.ok) return redirect(backWith(path, 'err', `${title} config invalid: ${parsed.error}`));
+    if (!parsed.ok) return redirect(backWith(path, 'err', `The ${title.toLowerCase()} settings couldn't be read, so nothing was saved. Reload the page and try again.`));
+    const problem = CONFIG_CHECKS[key]?.(parsed.value);
+    if (problem) return redirect(backWith(path, 'err', `Nothing was saved. ${problem}`));
     await setSiteConfig(env.DB, key, parsed.value);
     await logActivity(env.DB, user, 'updated', key, title);
     return redirect(backWith(path, 'msg', `${title} saved. ${savedNote}`));
@@ -476,7 +524,7 @@ export async function handleFonts(request, env, url, user) {
     if (path === '/admin/fonts/upload') return uploadFont(request, env, user);
     if (path === '/admin/fonts') {
       const parsed = await parsePostedConfig(request);
-      if (!parsed.ok) return redirect(backWith('/admin/fonts', 'err', `Fonts config invalid: ${parsed.error}`));
+      if (!parsed.ok) return redirect(backWith('/admin/fonts', 'err', "The font settings couldn't be read, so nothing was saved. Reload the page and try again."));
       // Normalise to { faces: [{ family, file, weight, style }] } — the shape
       // fontFacesToCss consumes (it skips faces missing family or file).
       const faces = (Array.isArray(parsed.value.faces) ? parsed.value.faces : [])
@@ -487,6 +535,12 @@ export async function handleFonts(request, env, url, user) {
           weight: String(f.weight || '').trim() || '400',
           style: f.style === 'italic' ? 'italic' : 'normal',
         }));
+      // A face is written into /theme.css, so each one is checked before any is saved.
+      const badFace = faces.find((f) => !isValidFontFace(f));
+      if (badFace) {
+        return redirect(backWith('/admin/fonts', 'err',
+          `Nothing was saved. "${badFace.family || 'A face'}" isn't valid: family names use letters, numbers, spaces, hyphens and underscores; the file must be a font uploaded here; the weight is a number such as 400, or a range such as 100 900 for a variable font.`));
+      }
       await setSiteConfig(DB, 'fonts', { faces });
       await logActivity(DB, user, 'updated', 'fonts', 'font faces');
       return redirect(backWith('/admin/fonts', 'msg', `Fonts saved. ${THEME_NOTE}`));
@@ -538,6 +592,16 @@ async function uploadFont(request, env, user) {
   if (!FONT_TYPES[ext]) {
     return redirect(backWith('/admin/fonts', 'err', 'Unsupported file type — use .woff2, .woff, .ttf or .otf.'));
   }
+  const face = {
+    family: String(form.get('family') || '').trim() || safe.replace(/\.[^.]+$/, ''),
+    file: `/media/fonts/${safe}`,
+    weight: String(form.get('weight') || '').trim() || '400',
+    style: form.get('style') === 'italic' ? 'italic' : 'normal',
+  };
+  if (!isValidFontFace(face)) {
+    return redirect(backWith('/admin/fonts', 'err',
+      'The font was not uploaded. Family names use letters, numbers, spaces, hyphens and underscores, and the weight is a number such as 400, or a range such as 100 900 for a variable font.'));
+  }
   // Bytes live in R2; the media route serves them back at /media/<key>, and it
   // only serves keys under media/ — so the key has to carry that prefix.
   await env.MEDIA.put(`media/fonts/${safe}`, await file.arrayBuffer(), {
@@ -546,12 +610,7 @@ async function uploadFont(request, env, user) {
 
   const config = (await getSiteConfig(DB, 'fonts', FONTS_DEFAULT)) || FONTS_DEFAULT;
   const faces = Array.isArray(config.faces) ? config.faces : [];
-  faces.push({
-    family: String(form.get('family') || '').trim() || safe.replace(/\.[^.]+$/, ''),
-    file: `/media/fonts/${safe}`,
-    weight: String(form.get('weight') || '').trim() || '400',
-    style: form.get('style') === 'italic' ? 'italic' : 'normal',
-  });
+  faces.push(face);
   await setSiteConfig(DB, 'fonts', { faces });
   await logActivity(DB, user, 'uploaded', 'fonts', safe);
   return redirect(backWith('/admin/fonts', 'msg',
@@ -563,7 +622,7 @@ async function uploadFont(request, env, user) {
 const TEXT_SETTINGS = [
   ['org_name', 'Organisation name', 'text', 'Shown in the header, footer, admin and page titles.'],
   ['org_tagline', 'Tagline', 'text', 'Short line shown on the home page and in the footer.'],
-  ['site_url', 'Site URL (canonical)', 'text', 'The public base URL, e.g. https://example.com (no trailing slash). Used for canonical links, the RSS feed, the sitemap and links in emails. Falls back to SITE_URL in wrangler.jsonc, then the origin of the current request. Set it explicitly if you use scheduled publishing: the cron has no request to borrow an origin from, so links in the emails it sends need this.'],
+  ['site_url', 'Site URL (canonical)', 'text', 'The public address of the site, e.g. https://example.com, with nothing after the name. Used for canonical links, the RSS feed, the sitemap and every link in an email. Email stays off until this is set. Only an admin can change it, because it decides where password-reset links point.'],
   ['email_from', 'Email “From” address', 'text', 'The address outgoing email is sent from, e.g. My Site <hello@example.com>. Must be an allowed sender set up in Cloudflare Email Routing. Falls back to SITE_EMAIL_FROM in wrangler.jsonc.'],
   ['logo_url', 'Logo / favicon image', 'media', 'Shown in the site header, the admin, and as the browser tab icon. Defaults to the bundled icon. A square SVG or PNG works best.'],
   ['seo_title_template', 'SEO title template', 'text', 'Optional — how page titles are composed, e.g. "%s — My Site" or "%s | My Site".'],
@@ -594,7 +653,22 @@ export async function handleSettings(request, env, url, user) {
 
   if (request.method === 'POST') {
     const form = await request.formData();
+    const isAdmin = roleAtLeast(user, 'admin');
+    // Check before anything is written, so a bad value saves nothing.
+    const siteUrl = normaliseSiteUrl(form.get('site_url'));
+    const siteUrlProblem = isAdmin ? siteUrlError(siteUrl) : null;
+    if (siteUrlProblem) return redirect(backWith('/admin/settings', 'err', `Nothing was saved. ${siteUrlProblem}`));
+    const emailFrom = String(form.get('email_from') ?? '').trim();
+    if (emailFrom && (/[\r\n]/.test(emailFrom) || !/@/.test(emailFrom))) {
+      return redirect(backWith('/admin/settings', 'err', 'Nothing was saved. The From address needs to be one address, such as My Site <hello@example.com>.'));
+    }
     for (const [key] of TEXT_SETTINGS) {
+      // The site URL decides where password-reset links point, so only an
+      // admin changes it. For anybody else the stored value stays as it is.
+      if (key === 'site_url') {
+        if (isAdmin) await setSiteSetting(DB, key, siteUrl);
+        continue;
+      }
       await setSiteSetting(DB, key, String(form.get(key) ?? '').trim());
     }
     for (const [key, , options, , , def] of SELECT_SETTINGS) {
@@ -617,7 +691,7 @@ export async function handleSettings(request, env, url, user) {
       <label for="set-${key}">${escapeHtml(label)}</label>
       ${kind === 'textarea'
         ? `<textarea id="set-${key}" name="${key}" rows="3">${escapeHtml(settings[key] || '')}</textarea>`
-        : `<input type="text" id="set-${key}" name="${key}" value="${escapeAttr(settings[key] || '')}"${kind === 'media' ? ' data-media' : ''}>`}
+        : `<input type="text" id="set-${key}" name="${key}" value="${escapeAttr(settings[key] || '')}"${kind === 'media' ? ' data-media' : ''}${key === 'site_url' && !roleAtLeast(user, 'admin') ? ' readonly' : ''}>`}
       <p class="hint">${escapeHtml(hint)}</p>
     </div>`).join('');
 
@@ -670,7 +744,9 @@ export async function handleSettings(request, env, url, user) {
 const EMAIL_KEY = /^[a-z0-9_-]+$/i;
 
 export async function handleEmails(request, env, url, user) {
-  const gate = requirePublisher(env, user, '/admin/emails'); if (gate) return gate;
+  // Admin-only: the templates hold the words around password-reset and
+  // confirmation links, so only the role that manages accounts edits them.
+  if (!roleAtLeast(user, 'admin')) return null;
   const path = url.pathname.replace(/\/$/, '');
   const DB = env.DB;
 

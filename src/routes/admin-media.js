@@ -25,6 +25,8 @@ import { logActivity, getSiteConfig, setSiteConfig } from '../db.js';
 import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 import { contentTypeForKey, isImageKey, fileTypeLabel, makeMediaKey } from './media.js';
+import { readUpload, nameWithSniffedExt } from '../sniff.js';
+import { roleAtLeast } from '../auth.js';
 
 // Shared <head> snippet for any admin page with media URL fields: the modal
 // picker (window.MEDIA) plus its styles. Classic (non-deferred) script so
@@ -391,18 +393,23 @@ async function listJson(env) {
 }
 
 async function upload(request, env, user) {
-  const form = await request.formData();
-  const wantsJson = !!form.get('json'); // fetch() uploads (the picker) get JSON back
-  const file = form.get('file');
-  if (!file || typeof file === 'string' || !file.size) {
-    if (wantsJson) return json({ error: 'Choose a file to upload.' }, 400);
-    return redirect('/admin/media?err=' + encodeURIComponent('Choose a file to upload.'));
+  // fetch() uploads (the picker) get JSON back. It's in the query string too,
+  // so a request refused before its body is read still gets JSON.
+  const queryJson = new URL(request.url).searchParams.get('json') === '1';
+  // The type is decided by the file's own bytes; see src/sniff.js.
+  const up = await readUpload(request, { purpose: 'library', isAdmin: roleAtLeast(user, 'admin') });
+  const form = up.form;
+  const wantsJson = queryJson || !!form?.get('json');
+  if (up.error) {
+    if (wantsJson) return json({ error: up.error }, up.status);
+    return redirect('/admin/media?err=' + encodeURIComponent(up.error));
   }
+  const { file, bytes, sniffed } = up;
 
   const yyyymm = new Date().toISOString().slice(0, 7).replace('-', '');
-  const key = makeMediaKey(yyyymm, file.name);
-  await env.MEDIA.put(key, file, {
-    httpMetadata: { contentType: file.type || contentTypeForKey(key) },
+  const key = makeMediaKey(yyyymm, nameWithSniffedExt(file.name, sniffed));
+  await env.MEDIA.put(key, bytes, {
+    httpMetadata: { contentType: sniffed.type },
   });
 
   // A typed "new folder" name wins over the select; both are optional.
@@ -428,31 +435,36 @@ function extOf(nameOrKey) {
 // extension is what the site uses to tell images from video, so changing it
 // would silently break type detection wherever the file is embedded.
 async function replace(request, env, user) {
-  const form = await request.formData();
-  const key = String(form.get('key') || '');
-  const back = cleanFolderName(form.get('back'));
+  // The same checks as an upload: the replacement's type comes from its bytes.
+  const up = await readUpload(request, { purpose: 'library', isAdmin: roleAtLeast(user, 'admin') });
+  const form = up.form;
+  const key = String(form?.get('key') || '');
+  const back = cleanFolderName(form?.get('back'));
   const backParams = backQ(back);
   const fail = (msg) => redirect('/admin/media?' + backParams + 'err=' + encodeURIComponent(msg));
+  if (up.error) return fail(up.error);
+  const { file, bytes, sniffed } = up;
 
   if (!key.startsWith('media/') || key.includes('..')) return fail('Invalid media key.');
   if (isEmoticonKey(key)) {
     return fail('Emoticons cannot be replaced here — manage them on the Emoticons page.');
   }
-  const file = form.get('file');
-  if (!file || typeof file === 'string' || !file.size) return fail('Choose a replacement file.');
 
   // The object must already exist — replace never creates a new key.
   const existing = await env.MEDIA.head(key);
   if (!existing) return fail('That file no longer exists.');
 
-  const oldExt = extOf(key);
-  const newExt = extOf(file.name);
+  // The replacement has to really be the same kind of file as the key says:
+  // its bytes for a type we recognise, its name for an attachment.
+  const norm = (e) => (e === 'jpeg' ? 'jpg' : e);
+  const oldExt = norm(extOf(key));
+  const newExt = norm(sniffed.ext || extOf(file.name));
   if (oldExt && newExt !== oldExt) {
     return fail(`The replacement must be the same file type (.${oldExt}). To change the type, upload a new file and update where it is used.`);
   }
 
-  await env.MEDIA.put(key, file, {
-    httpMetadata: { contentType: file.type || contentTypeForKey(key) },
+  await env.MEDIA.put(key, bytes, {
+    httpMetadata: { contentType: sniffed.type },
   });
   await logActivity(env.DB, user, 'replaced', 'media', key);
   return redirect('/admin/media?' + backParams + 'ok=' + encodeURIComponent('Replaced ' + key + ' — the URL is unchanged, so every reference now points at the new file. Images are cached hard, so browsers that already have the old one may need a refresh to see it.'));

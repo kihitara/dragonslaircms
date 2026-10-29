@@ -95,7 +95,7 @@
       fd.append('file', file);
       fd.append('json', '1');
       if (folder) fd.append('folder', folder);
-      return fetch('/admin/media/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
+      return fetch('/admin/media/upload?json=1', { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
         .then(function (res) {
           if (res.ok && res.d && res.d.url) return res.d.url;

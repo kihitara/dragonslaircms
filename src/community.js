@@ -27,7 +27,11 @@ export function nl2br(str) {
 // Render a stored comment/reply body for display. body_format 'html' is already
 // sanitised on write (sanitizeCommentHtml) — emit it raw. Anything else (plain
 // text: anonymous / legacy comments) goes through nl2br(escapeHtml()).
+// body_format 'removed' is a comment its author deleted after others had
+// replied: the row stays, with no body and no author, so the replies still
+// read in context.
 function renderBody(row) {
+  if (row.body_format === 'removed') return '<p class="muted"><em>This comment was removed by its author.</em></p>';
   return row.body_format === 'html' ? String(row.body || '') : nl2br(row.body);
 }
 
@@ -59,9 +63,21 @@ function correctionWidget({ entityType, entityId, submitted, spam = '' }) {
   </details>`;
 }
 
+// A public post that couldn't be accepted comes back with ?error=<code>. Each
+// code is a fixed sentence: no text is ever read from the URL for display.
+const POST_ERRORS = {
+  too_long: 'That was too long to post. Comments and corrections can be up to 10,000 characters, and names up to 80.',
+  1: "That couldn't be posted. Please check it and try again.",
+};
+function postErrorNotice(params) {
+  const msg = POST_ERRORS[params.get('error')];
+  return msg ? `<div class="notice notice-error" role="alert">${escapeHtml(msg)}</div>` : '';
+}
+
 // ── Comment rendering ────────────────────────────────────────────────────────
 
 function displayName(row) {
+  if (row.body_format === 'removed') return 'Removed';
   if (row.staff_reply) return row.anonymous_name || 'Staff'; // staff name is stored in anonymous_name
   return row.username || row.anonymous_name || 'Anonymous';
 }
@@ -158,8 +174,10 @@ export async function renderArticleCommunity(request, env, article) {
   const acceptingComments = mode === 'enabled' || (mode === 'readers' && !!reader);
 
   // Post-submit notices (set by /api/* redirects back to this page).
-  let notice = '';
-  if (params.get('commented') === '1' || params.get('replied') === '1') {
+  let notice = postErrorNotice(params);
+  if (notice) {
+    // the error is the whole message
+  } else if (params.get('commented') === '1' || params.get('replied') === '1') {
     notice = `<div class="notice">Thanks! Your ${params.get('replied') === '1' ? 'reply' : 'comment'} has been received and is awaiting moderation.</div>`;
   } else if (params.get('subscribed') === '1') {
     notice = `<div class="notice notice-green">You're now subscribed to new articles.</div>`;
@@ -250,6 +268,7 @@ export async function renderPageCorrections(request, env, page) {
   const spam = honeypotField() + spamTokenField(await spamToken(env));
   return `${CSS_LINK}
 <section class="community-block">
+  ${postErrorNotice(params)}
   ${correctionWidget({ entityType: 'page', entityId: page.id, submitted: params.get('corrected') === '1', spam })}
 </section>`;
 }

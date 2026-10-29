@@ -10,6 +10,7 @@
   "scripts": {
     "setup": "node scripts/setup.js",
     "dev": "wrangler dev",
+    "test": "node --test \"tests/*.test.js\"",
     "deploy": "npm run db:schema:remote && wrangler deploy",
     "db:schema": "wrangler d1 execute DB --file=schema.sql --local --yes",
     "db:schema:remote": "wrangler d1 execute DB --file=schema.sql --remote --yes"

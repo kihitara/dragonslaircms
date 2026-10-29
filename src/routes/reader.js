@@ -3,8 +3,9 @@
 // Reader pages render with the public site chrome (sitePage + loadChrome).
 
 import {
-  hashPassword, verifyPassword,
+  hashPassword, verifyPassword, burnTime, passwordError, PASSWORD_MIN, PASSWORD_MAX,
   createReaderSession, getReaderSession, destroyReaderSession, clearReaderSessionCookie,
+  destroyReaderSessionsStmt,
   clientIp, isLockedOut, recordLoginFailure, clearLoginFailures,
   generateVerificationToken, generateResetToken,
 } from '../auth.js';
@@ -63,6 +64,9 @@ export async function handleReader(request, env, url) {
     case '/reader/reset':
       return reset(request, env, url);
     case '/reader/logout': {
+      // POST only: a sign-out that answered GET could be set off by an image
+      // tag on any page. A stray GET goes back to the dashboard.
+      if (request.method !== 'POST') return redirect('/reader/dashboard');
       const reader = await getReaderSession(request, DB, env.READER_SESSION_SECRET);
       if (reader) {
         await destroyReaderSession(DB, reader.sessionId);
@@ -100,7 +104,18 @@ function narrow(inner) {
 
 // ── Registration ─────────────────────────────────────────────────────────────
 
-function registerFormHtml({ error = '', username = '', email = '' } = {}) {
+// What happens after the form is submitted, said before it is submitted, so
+// nobody is surprised by a wait they didn't expect. With mail off there is no
+// link to send, so an admin always approves the account (Open falls back to
+// Approval rather than letting anybody in under any address).
+function afterRegisterHint(emailOn, requiresApproval) {
+  if (!emailOn) return "The site team will approve your account before you can log in. This site isn't sending email, so check back here rather than waiting for a message.";
+  return requiresApproval
+    ? "We'll email you a link to confirm this address. Once you've confirmed it, the site team will approve your account."
+    : "We'll email you a link to confirm this address before you can log in.";
+}
+
+function registerFormHtml({ error = '', username = '', email = '', hint = '' } = {}) {
   return `
     <h1>Create a reader account</h1>
     <p class="muted">Comment under your own name, subscribe to the blog, and manage your notifications.</p>
@@ -109,11 +124,11 @@ function registerFormHtml({ error = '', username = '', email = '' } = {}) {
       <div class="field"><label for="username">Username</label>
         <input type="text" id="username" name="username" value="${escapeAttr(username)}" required maxlength="80" autocomplete="username"></div>
       <div class="field"><label for="email">Email</label>
-        <input type="email" id="email" name="email" value="${escapeAttr(email)}" required maxlength="200" autocomplete="email">
-        <p class="hint">You'll need to verify this address before your account is activated.</p></div>
+        <input type="email" id="email" name="email" value="${escapeAttr(email)}" required maxlength="254" autocomplete="email">
+        <p class="hint">${escapeHtml(hint)}</p></div>
       <div class="field"><label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="8" autocomplete="new-password">
-        <p class="hint">At least 8 characters.</p></div>
+        <input type="password" id="password" name="password" required minlength="12" maxlength="256" autocomplete="new-password">
+        <p class="hint">At least 12 characters.</p></div>
       <button class="btn" type="submit">Register</button>
       <p class="small muted" style="margin-top:1rem">Already have an account? <a href="/reader/login">Log in</a></p>
     </form>`;
@@ -132,7 +147,9 @@ async function register(request, env, url) {
   }
 
   const emailOn = await emailEnabled(env);
-  const requiresApproval = (settings.registration_requires_approval ?? '1') !== '0';
+  // With mail off, Open registration falls back to Approval.
+  const requiresApproval = !emailOn || (settings.registration_requires_approval ?? '1') !== '0';
+  const hint = afterRegisterHint(emailOn, requiresApproval);
 
   if (request.method === 'GET') {
     if (url.searchParams.get('success') === '1') {
@@ -140,14 +157,12 @@ async function register(request, env, url) {
       // whether approval is required.
       const { title, body } = emailOn
         ? { title: 'Check your email', body: `<p>Thanks for registering! We've sent you a verification link — click it within 24 hours to verify your address.</p><p class="muted">${requiresApproval ? 'Once verified, your account will be reviewed by the site team before you can log in.' : 'Once verified, you can log in straight away.'}</p>` }
-        : requiresApproval
-          ? { title: 'Registration received', body: `<p>Thanks for registering! Your account is now awaiting approval by the site team — you'll be able to log in once it's approved.</p>` }
-          : { title: 'Account created', body: `<p>Thanks for registering! Your account is ready — you can <a href="/reader/login">log in</a> now.</p>` };
+        : { title: 'Registration received', body: `<p>Thanks for registering! Your account is now awaiting approval by the site team. You'll be able to log in once it's approved.</p><p class="muted">This site isn't sending email, so check back here rather than waiting for a message.</p>` };
       return readerPage(request, env, url, { title, content: narrow(`<h1>${escapeHtml(title)}</h1>${body}`) });
     }
     const reader = await getReaderSession(request, DB, env.READER_SESSION_SECRET);
     if (reader) return redirect('/reader/dashboard');
-    return readerPage(request, env, url, { title: 'Register', content: narrow(registerFormHtml()) });
+    return readerPage(request, env, url, { title: 'Register', content: narrow(registerFormHtml({ hint })) });
   }
 
   const form = await request.formData();
@@ -155,11 +170,13 @@ async function register(request, env, url) {
   const email = String(form.get('email') || '').trim().toLowerCase();
   const password = String(form.get('password') || '');
 
-  const bad = (error) => readerPage(request, env, url, { title: 'Register', content: narrow(registerFormHtml({ error, username, email })) });
+  const bad = (error) => readerPage(request, env, url, { title: 'Register', content: narrow(registerFormHtml({ error, username, email, hint })), status: 400 });
 
   if (!username || username.length < 2) return bad('Please choose a username (at least 2 characters).');
-  if (!email.includes('@')) return bad('Please enter a valid email address.');
-  if (password.length < 8) return bad('Password must be at least 8 characters.');
+  if (username.length > 80) return bad('Usernames can be at most 80 characters.');
+  if (!email.includes('@') || email.length > 254) return bad('Please enter a valid email address.');
+  const pwErr = await passwordError(password);
+  if (pwErr) return bad(pwErr);
 
   const [existEmail, existUser] = await Promise.all([
     DB.prepare('SELECT id FROM reader_accounts WHERE email = ?').bind(email).first(),
@@ -170,7 +187,7 @@ async function register(request, env, url) {
 
   const passwordHash = await hashPassword(password);
   const siteName = await getSiteName(env);
-  const siteUrl = env.SITE_URL || '';
+  const siteUrl = env.SITE_URL || ''; // always set when emailOn: mail needs a site URL
 
   if (emailOn) {
     const { token, expires } = generateVerificationToken();
@@ -195,19 +212,19 @@ async function register(request, env, url) {
   }
 
   // No-email mode: there's no way to deliver a verification link, so skip that
-  // step (mark verified) and keep the admin-approval gate as the anti-spam
-  // check. If approval is off, the account is usable immediately.
-  const status = requiresApproval ? 'pending' : 'approved';
+  // step and keep the admin-approval gate. The account is always created
+  // pending, whatever the approval setting says: Open with no mail would let
+  // anybody make a usable account under any address with nobody in the way.
   const inserted = await DB.prepare(
     `INSERT INTO reader_accounts (username, email, password_hash, status, email_verified, verification_token, verification_expires)
-     VALUES (?, ?, ?, ?, 1, NULL, NULL)`
-  ).bind(username, email, passwordHash, status).run();
+     VALUES (?, ?, ?, 'pending', 1, NULL, NULL)`
+  ).bind(username, email, passwordHash).run();
   await logReaderActivity(DB, inserted.meta?.last_row_id, 'registered', email);
   await notifyAdmins(env, 'notify_new_registration', 'admin_new_registration', {
     site_name: siteName,
     username,
     email,
-    status_line: requiresApproval ? 'They are awaiting your approval.' : 'Their account is active.',
+    status_line: 'They are awaiting your approval.',
     link: `${siteUrl}/admin/readers`,
   });
   return redirect('/reader/register?success=1');
@@ -215,9 +232,26 @@ async function register(request, env, url) {
 
 // ── Email verification ───────────────────────────────────────────────────────
 
+// Opening the link shows a page with one button; pressing it confirms. Mail
+// scanners and link previews open every link they see, so a link that acted on
+// GET would be spent before the reader ever clicked it.
 async function verify(request, env, url) {
   const DB = env.DB;
-  const token = (url.searchParams.get('token') || '').trim();
+  if (request.method !== 'POST') {
+    const token = (url.searchParams.get('token') || '').trim();
+    if (!token) return redirect('/reader/login?error=invalid_token');
+    return readerPage(request, env, url, {
+      title: 'Confirm your email address',
+      content: narrow(`<h1>Confirm your email address</h1>
+        <p>Press the button to confirm this address for your reader account.</p>
+        <form method="post" action="/reader/verify">
+          <input type="hidden" name="token" value="${escapeAttr(token)}">
+          <button class="btn" type="submit">Confirm my address</button>
+        </form>`),
+    });
+  }
+  const form = await request.formData();
+  const token = String(form.get('token') || '').trim();
   if (!token) return redirect('/reader/login?error=invalid_token');
 
   const reader = await DB.prepare(
@@ -228,9 +262,12 @@ async function verify(request, env, url) {
     return redirect('/reader/login?error=token_expired');
   }
 
-  await DB.prepare(
-    'UPDATE reader_accounts SET email_verified = 1, verification_token = NULL, verification_expires = NULL WHERE id = ?'
-  ).bind(reader.id).run();
+  // The token is part of the update's own WHERE, so two presses of one link
+  // can't both get through.
+  const spent = await DB.prepare(
+    'UPDATE reader_accounts SET email_verified = 1, verification_token = NULL, verification_expires = NULL WHERE id = ? AND verification_token = ?'
+  ).bind(reader.id, token).run();
+  if (!spent.meta.changes) return redirect('/reader/login?error=invalid_token');
   await logReaderActivity(DB, reader.id, 'verified email', reader.email);
 
   const siteName = await getSiteName(env);
@@ -316,7 +353,9 @@ async function login(request, env, url) {
   const reader = email
     ? await DB.prepare('SELECT * FROM reader_accounts WHERE email = ?').bind(email).first()
     : null;
-  const ok = reader && await verifyPassword(password, reader.password_hash);
+  // With no account, check against a dummy hash anyway, so the response takes
+  // as long and can't tell anybody whether the address has an account.
+  const ok = reader ? await verifyPassword(password, reader.password_hash) : await burnTime(password);
   if (!ok) {
     await recordLoginFailure(DB, ip);
     return bad('Invalid email or password.');
@@ -330,6 +369,12 @@ async function login(request, env, url) {
   }
   if (reader.status === 'rejected') {
     return bad('Your account registration was not approved. Contact the site owner if you think this is a mistake.', 403);
+  }
+  // Status and the address are separate questions: an approved account still
+  // needs a confirmed address. This comes after the password check, so it
+  // only tells somebody who already knows the password.
+  if (!reader.email_verified) {
+    return bad('Please confirm your email address first: check your inbox for the confirmation link.', 403);
   }
 
   await clearLoginFailures(DB, ip);
@@ -376,14 +421,14 @@ async function forgot(request, env, url) {
   if (email) {
     const reader = await DB.prepare('SELECT * FROM reader_accounts WHERE email = ?').bind(email).first();
     // Only approved accounts can reset — pending/rejected have no usable login.
-    if (reader && reader.status === 'approved') {
+    if (reader && reader.status === 'approved' && reader.email_verified) {
       const { token, expires } = generateResetToken();
       await DB.prepare('UPDATE reader_accounts SET reset_token = ?, reset_expires = ? WHERE id = ?')
         .bind(token, expires, reader.id).run();
       await sendTemplatedEmail(env, 'reset_password', reader.email, {
         site_name: await getSiteName(env),
         name: reader.username,
-        link: `${env.SITE_URL || ''}/reader/reset?token=${token}`,
+        link: `${env.SITE_URL}/reader/reset?token=${token}`,
       });
       await logReaderActivity(DB, reader.id, 'requested a password reset');
     }
@@ -411,10 +456,10 @@ function resetFormHtml({ token = '', error = '' } = {}) {
     <form method="post" action="/reader/reset">
       <input type="hidden" name="token" value="${escapeAttr(token)}">
       <div class="field"><label for="password">New password</label>
-        <input type="password" id="password" name="password" required minlength="8" autofocus autocomplete="new-password">
-        <p class="hint">At least 8 characters.</p></div>
+        <input type="password" id="password" name="password" required minlength="12" maxlength="256" autofocus autocomplete="new-password">
+        <p class="hint">At least 12 characters.</p></div>
       <div class="field"><label for="confirm">Confirm new password</label>
-        <input type="password" id="confirm" name="confirm" required minlength="8" autocomplete="new-password"></div>
+        <input type="password" id="confirm" name="confirm" required minlength="12" maxlength="256" autocomplete="new-password"></div>
       <button class="btn" type="submit">Set new password</button>
     </form>`;
 }
@@ -440,14 +485,16 @@ async function reset(request, env, url) {
   const reader = await readerByResetToken(DB, token);
   if (!reader) return readerPage(request, env, url, { title: 'Reset password', content: narrow(resetInvalidHtml), status: 400 });
   const bad = (error) => readerPage(request, env, url, { title: 'Reset password', content: narrow(resetFormHtml({ token, error })), status: 400 });
-  if (password.length < 8) return bad('Password must be at least 8 characters.');
   if (password !== confirm) return bad('The two passwords do not match.');
+  const pwErr = await passwordError(password);
+  if (pwErr) return bad(pwErr);
 
   const hash = await hashPassword(password);
   // New password, burn the token, and drop existing sessions.
-  await DB.prepare('UPDATE reader_accounts SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?')
-    .bind(hash, reader.id).run();
-  await DB.prepare('DELETE FROM reader_sessions WHERE reader_account_id = ?').bind(reader.id).run();
+  await DB.batch([
+    DB.prepare('UPDATE reader_accounts SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?').bind(hash, reader.id),
+    destroyReaderSessionsStmt(DB, reader.id),
+  ]);
   await logReaderActivity(DB, reader.id, 'reset password');
   return redirect('/reader/login?reset=1');
 }
@@ -534,7 +581,7 @@ async function dashboard(request, env, url) {
       <div class="reader-head">
         <h1>Hi, ${escapeHtml(reader.username)}</h1>
         <div><a class="btn btn-secondary btn-small" href="/reader/settings">Settings</a>
-        <a class="btn btn-secondary btn-small" href="/reader/logout">Log out</a></div>
+        <form method="post" action="/reader/logout" style="display:inline"><button class="btn btn-secondary btn-small" type="submit">Log out</button></form></div>
       </div>
       ${notice}
       <div class="card" style="margin-bottom:1.5rem"><h3>Blog subscription</h3>${subCard}</div>
@@ -574,7 +621,9 @@ async function settings(request, env, url) {
   }[url.searchParams.get('success')] || '';
   const errorFlash = {
     wrong_password: '<div class="notice notice-error">Your current password was incorrect.</div>',
-    password_short: '<div class="notice notice-error">New password must be at least 8 characters.</div>',
+    password_short: '<div class="notice notice-error">New passwords need to be at least 12 characters.</div>',
+    password_long: '<div class="notice notice-error">New passwords can be at most 256 characters.</div>',
+    password_breached: '<div class="notice notice-error">That password has turned up in a known data breach, so it is not safe to use. Please choose a different one.</div>',
     password_mismatch: '<div class="notice notice-error">New passwords did not match.</div>',
   }[url.searchParams.get('error')] || '';
 
@@ -600,7 +649,8 @@ async function settings(request, env, url) {
         <div class="field"><label for="current_password">Current password</label>
           <input type="password" id="current_password" name="current_password" required autocomplete="current-password"></div>
         <div class="field"><label for="new_password">New password</label>
-          <input type="password" id="new_password" name="new_password" required minlength="8" autocomplete="new-password"></div>
+          <input type="password" id="new_password" name="new_password" required minlength="12" maxlength="256" autocomplete="new-password">
+          <p class="hint">At least 12 characters.</p></div>
         <div class="field"><label for="confirm_password">Confirm new password</label>
           <input type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password"></div>
         <button class="btn btn-small" type="submit">Change password</button>
@@ -624,11 +674,17 @@ async function changePassword(request, env) {
   if (!row || !(await verifyPassword(current, row.password_hash))) {
     return redirect('/reader/settings?error=wrong_password');
   }
-  if (next.length < 8) return redirect('/reader/settings?error=password_short');
   if (next !== confirm) return redirect('/reader/settings?error=password_mismatch');
+  if (next.length < PASSWORD_MIN) return redirect('/reader/settings?error=password_short');
+  if (next.length > PASSWORD_MAX) return redirect('/reader/settings?error=password_long');
+  if (await passwordError(next)) return redirect('/reader/settings?error=password_breached');
 
-  await DB.prepare('UPDATE reader_accounts SET password_hash = ? WHERE id = ?')
-    .bind(await hashPassword(next), reader.id).run();
+  // Changing a password signs out every other device, so a stolen session
+  // doesn't outlive the change. This one stays signed in.
+  await DB.batch([
+    DB.prepare('UPDATE reader_accounts SET password_hash = ? WHERE id = ?').bind(await hashPassword(next), reader.id),
+    destroyReaderSessionsStmt(DB, reader.id, reader.sessionId),
+  ]);
   await logReaderActivity(DB, reader.id, 'changed password');
   return redirect('/reader/settings?success=password');
 }
@@ -716,9 +772,21 @@ async function deleteOwnComment(request, env, commentId) {
      WHERE c.id = ? AND c.reader_account_id = ?`
   ).bind(commentId, reader.id).first();
 
-  // Replies are removed by the comment_replies FK cascade.
-  await DB.prepare('DELETE FROM comments WHERE id = ? AND reader_account_id = ?')
-    .bind(commentId, reader.id).run();
+  // Deleting a comment would take every reply under it with it (the
+  // comment_replies cascade), including other readers' and staff replies, and
+  // nobody may delete somebody else's words. So a comment with replies is kept
+  // as a placeholder, with its text and author gone; one with none is deleted.
+  const hasReplies = await DB.prepare('SELECT 1 FROM comment_replies WHERE comment_id = ? LIMIT 1').bind(commentId).first();
+  if (hasReplies) {
+    await DB.prepare(
+      `UPDATE comments SET body = '', body_format = 'removed', reader_account_id = NULL,
+         anonymous_name = NULL, anonymous_email = NULL, edited_at = datetime('now')
+       WHERE id = ? AND reader_account_id = ?`
+    ).bind(commentId, reader.id).run();
+  } else {
+    await DB.prepare('DELETE FROM comments WHERE id = ? AND reader_account_id = ?')
+      .bind(commentId, reader.id).run();
+  }
   if (comment) await logReaderActivity(DB, reader.id, 'deleted comment', comment.title);
   return redirect('/reader/dashboard?deleted=1');
 }

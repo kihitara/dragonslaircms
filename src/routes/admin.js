@@ -4,7 +4,7 @@
 import {
   getSession, createSession, destroySession, clearSessionCookie,
   verifyPassword, hashPassword, clientIp, isLockedOut, recordLoginFailure, clearLoginFailures,
-  generateResetToken,
+  generateResetToken, burnTime, passwordError, destroyUserSessionsStmt,
 } from '../auth.js';
 import { getUserByEmail, touchLastLogin, getDashboardStats, logActivity, getBranding } from '../db.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
@@ -87,7 +87,10 @@ export async function handleAdmin(request, env, url) {
   if (!user) return redirect(await noUsers(DB) ? '/admin/setup' : '/admin/login');
   user.branding = branding; // adminPage reads this for the wordmark/logo
 
+  // Sign-out is POST only: one that answered GET could be triggered by an
+  // image tag on any page. A stray GET just goes back to the dashboard.
   if (path === '/admin/logout') {
+    if (request.method !== 'POST') return redirect('/admin');
     await destroySession(DB, user.sessionId);
     return redirect('/admin/login', { 'Set-Cookie': clearSessionCookie() });
   }
@@ -131,19 +134,26 @@ async function handleSetup(request, env, branding) {
   const name = String(form.get('name') || '').trim();
   const email = String(form.get('email') || '').trim().toLowerCase();
   const password = String(form.get('password') || '');
-  if (!name || !email || password.length < 8) {
-    return html(adminSetupPage({ error: 'Enter a name, a valid email, and a password of at least 8 characters.', name, email, branding }), { status: 400 });
+  if (!name || !email) {
+    return html(adminSetupPage({ error: 'Enter a name and a valid email.', name, email, branding }), { status: 400 });
   }
+  const pwErr = await passwordError(password);
+  if (pwErr) return html(adminSetupPage({ error: pwErr, name, email, branding }), { status: 400 });
 
+  // The insert only happens while the table is still empty, in the same
+  // statement, so two people racing the form can't both become the first admin.
   const hash = await hashPassword(password);
   let userId;
   try {
     const res = await DB.prepare(
-      `INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, 'admin', ?)`
+      `INSERT INTO users (email, name, role, password_hash)
+       SELECT ?, ?, 'admin', ? WHERE NOT EXISTS (SELECT 1 FROM users)`
     ).bind(email, name, hash).run();
+    if (!res.meta.changes) return redirect('/admin/login'); // somebody else got there first
     userId = res.meta.last_row_id;
-  } catch {
-    return html(adminSetupPage({ error: 'Could not create that account — an admin may already exist. Try logging in.', name, email, branding }), { status: 400 });
+  } catch (err) {
+    console.error('[setup] Could not create the first admin:', err?.message || err);
+    return html(adminSetupPage({ error: 'Could not create that account. Please try again.', name, email, branding }), { status: 500 });
   }
   await logActivity(DB, { id: userId, name }, 'created', 'first admin account', email);
   const { cookieHeader } = await createSession(DB, userId, env.ADMIN_SESSION_SECRET);
@@ -173,7 +183,10 @@ async function handleLogin(request, env, branding, showForgot) {
   }
 
   const user = email ? await getUserByEmail(DB, email) : null;
-  const ok = user && user.active && await verifyPassword(password, user.password_hash);
+  // With no account, check against a dummy hash anyway, so the response takes
+  // as long and can't tell anybody whether the address has an account.
+  const valid = user ? await verifyPassword(password, user.password_hash) : await burnTime(password);
+  const ok = user && user.active && valid;
   if (!ok) {
     await recordLoginFailure(DB, ip);
     return html(adminLoginPage({ error: 'Invalid email or password.', email, branding, showForgot }), { status: 401 });
@@ -195,14 +208,16 @@ async function handleForgot(request, env, branding) {
   const email = String(form.get('email') || '').trim().toLowerCase();
   if (email) {
     const user = await getUserByEmail(DB, email);
-    if (user && user.active) {
+    // The link is built from the configured site URL only, never from the
+    // request's host, so with no site URL there is nothing safe to send.
+    if (user && user.active && env.SITE_URL) {
       const { token, expires } = generateResetToken();
       await DB.prepare('UPDATE users SET reset_token = ?, reset_expires = ? WHERE id = ?')
         .bind(token, expires, user.id).run();
       await sendTemplatedEmail(env, 'reset_password', user.email, {
         site_name: await getSiteName(env),
         name: user.name,
-        link: `${env.SITE_URL || ''}/admin/reset?token=${token}`,
+        link: `${env.SITE_URL}/admin/reset?token=${token}`,
       });
       await logActivity(DB, { id: user.id, name: user.name }, 'requested a password reset', 'session', user.email);
     }
@@ -235,15 +250,17 @@ async function handleReset(request, env, branding) {
 
   const user = await userByResetToken(DB, token);
   if (!user) return html(adminResetPage({ invalid: true, branding }), { status: 400 });
-  if (password.length < 8) return html(adminResetPage({ token, error: 'Password must be at least 8 characters.', branding }), { status: 400 });
   if (password !== confirm) return html(adminResetPage({ token, error: 'The two passwords do not match.', branding }), { status: 400 });
+  const pwErr = await passwordError(password);
+  if (pwErr) return html(adminResetPage({ token, error: pwErr, branding }), { status: 400 });
 
   const hash = await hashPassword(password);
   // Set the new password, burn the token, and drop any existing sessions so an
   // attacker holding an old session is logged out.
-  await DB.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?')
-    .bind(hash, user.id).run();
-  await DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
+  await DB.batch([
+    DB.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?').bind(hash, user.id),
+    destroyUserSessionsStmt(DB, user.id),
+  ]);
   await logActivity(DB, { id: user.id, name: user.name }, 'reset password', 'session', user.email);
   return redirect('/admin/login?reset=1');
 }

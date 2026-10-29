@@ -29,6 +29,39 @@ function readAttr(raw, name) {
   return m[2] != null ? m[2] : m[3] != null ? m[3] : m[4] != null ? m[4] : '';
 }
 
+// One tag starting at src[i] === '<': its name, whether it closes, and its raw
+// attribute text, or null when it isn't a tag that closes within MAX_TAG
+// characters. Quoted attribute values may contain '>'. The longest tag the
+// editor writes, an emoticon <img>, is about 100 characters.
+const MAX_TAG = 256;
+const TAG_NAME = /[a-zA-Z][a-zA-Z0-9]*/y;
+
+function readTag(src, i) {
+  let j = i + 1;
+  const closing = src[j] === '/';
+  if (closing) j++;
+  TAG_NAME.lastIndex = j;
+  const nm = TAG_NAME.exec(src);
+  if (!nm) return null;
+  const attrStart = j + nm[0].length;
+  const limit = Math.min(src.length, i + MAX_TAG);
+  j = attrStart;
+  while (j < limit) {
+    const c = src[j];
+    if (c === '>') return { closing, name: nm[0], raw: src.slice(attrStart, j), end: j };
+    if (c === '<') return null; // an unquoted '<' never sits inside a real tag
+    if (c === '"' || c === "'") {
+      let k = j + 1;
+      while (k < limit && src[k] !== c) k++;
+      if (k >= limit) return null;
+      j = k + 1;
+      continue;
+    }
+    j++;
+  }
+  return null;
+}
+
 // Sanitise a rich comment body. Returns safe HTML (may be '' if nothing
 // survives). Tags are balanced: stray closes are ignored, and anything left
 // open at the end is closed, so a comment can never leak markup into the page.
@@ -38,15 +71,25 @@ export function sanitizeCommentHtml(input) {
   const stack = [];
   // Each token is: a tag (attributes may contain quoted '>'), a run of text
   // without '<', or a lone '<' that isn't a tag start (kept as literal text so
-  // "a < b" and "<3" survive rather than vanishing).
-  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>|([^<]+)|(<)/g;
-  let m;
-  while ((m = re.exec(src))) {
-    if (m[4] != null) { out.push(escText(m[4])); continue; }
-    if (m[5] != null) { out.push('&lt;'); continue; }
-    const closing = m[1] === '/';
-    const raw = m[3] || '';
-    let name = m[2].toLowerCase();
+  // "a < b" and "<3" survive rather than vanishing). The scanner is linear: a
+  // tag must close within MAX_TAG characters, or its '<' is treated as text.
+  // A regex that searched to the end of the input from every unclosed '<' made
+  // a 48 KB comment take most of a second.
+  let i = 0;
+  while (i < src.length) {
+    if (src[i] !== '<') {
+      const next = src.indexOf('<', i);
+      const end = next === -1 ? src.length : next;
+      out.push(escText(src.slice(i, end)));
+      i = end;
+      continue;
+    }
+    const tag = readTag(src, i);
+    if (!tag) { out.push('&lt;'); i++; continue; }
+    i = tag.end + 1;
+    const closing = tag.closing;
+    const raw = tag.raw;
+    let name = tag.name.toLowerCase();
     if (TAG_MAP[name]) name = TAG_MAP[name];
 
     if (name === 'img') {

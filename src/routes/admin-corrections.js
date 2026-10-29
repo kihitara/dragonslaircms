@@ -5,6 +5,7 @@
 import { adminPage, escapeHtml, escapeAttr, redirect, html } from '../templates/base.js';
 import { CONFIRM_MODAL_HEAD } from '../templates/confirm-modal.js';
 import { logActivity } from '../db.js';
+import { roleAtLeast } from '../auth.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
 import { articlePath, nl2br } from '../community.js';
 
@@ -17,6 +18,8 @@ export async function handleCorrections(request, env, url, user) {
 
   if (request.method === 'POST') {
     const m = path.match(/^\/admin\/corrections\/(\d+)\/(done|reopen|delete)$/);
+    // Editors mark corrections done or reopen them; deleting needs a publisher.
+    if (m && m[2] === 'delete' && !roleAtLeast(user, 'publisher')) return null;
     if (m) return correctionAction(env, Number(m[1]), m[2], user);
   }
 
@@ -86,7 +89,7 @@ async function listCorrections(request, env, url, user) {
       <td data-label="Submitted" class="muted small">${escapeHtml((c.created_at || '').slice(0, 16).replace('T', ' '))}</td>
       <td><div class="row-actions">
         ${c.status === 'open' ? btn(c.id, 'done', 'Mark done', 'btn-green') : btn(c.id, 'reopen', 'Reopen')}
-        ${btn(c.id, 'delete', 'Delete', 'btn-danger', 'Delete this correction?')}
+        ${roleAtLeast(user, 'publisher') ? btn(c.id, 'delete', 'Delete', 'btn-danger', 'Delete this correction?') : ''}
       </div></td>
     </tr>`).join('');
 

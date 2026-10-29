@@ -118,9 +118,24 @@ export const EMAIL_TEMPLATE_DEFAULTS = {
 
 // {{key}} → vars[key]; unknown placeholders are left visible so a template
 // typo is obvious in the received email rather than silently blank.
-export function renderTemplate(str, vars = {}) {
-  return String(str).replace(/\{\{(\w+)\}\}/g, (_, key) => (vars[key] !== undefined ? String(vars[key]) : `{{${key}}}`));
+//
+// Every value is escaped for the HTML body, because many of them are typed by
+// readers or anonymous visitors (comment text, usernames, correction text) and
+// an unescaped one would put their markup, links included, into mail sent from
+// this site. The template itself is still HTML. The subject is plain text, so
+// values go in as they are, and CR and LF are stripped so nothing can add a
+// header line.
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeValue = (v) => String(v).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+
+export function renderTemplate(str, vars = {}, { html = true } = {}) {
+  return String(str).replace(/\{\{(\w+)\}\}/g, (_, key) => {
+    if (vars[key] === undefined) return `{{${key}}}`;
+    return html ? escapeValue(vars[key]) : String(vars[key]);
+  });
 }
+
+export const stripHeaderBreaks = (v) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim();
 
 // Crude HTML → plain-text for the multipart text alternative.
 function htmlToText(htmlStr) {
@@ -147,12 +162,14 @@ export async function getSiteName(env) {
 }
 
 // Is outgoing email available AND switched on? False when the send_email
-// binding is absent (e.g. Workers Free plan / no domain) or when an admin has
-// turned email off in Settings ('email_enabled' = '0'). When false the CMS
-// runs in "no-email mode": sends are skipped and the sign-up / password flows
-// adapt so no one gets stranded. Absent setting = on (matches other toggles).
+// binding is absent (e.g. Workers Free plan / no domain), when there is no
+// site URL or From address, or when an admin has turned email off in Settings
+// ('email_enabled' = '0'). When false the CMS runs in "no-email mode": sends
+// are skipped and the sign-up / password flows adapt so no one gets stranded.
+// The site URL is required because every link in an email is built from it,
+// never from the host a request happened to arrive on.
 export async function emailEnabled(env) {
-  if (!env.EMAIL) return false;
+  if (!env.EMAIL || !env.SITE_URL || !env.SITE_EMAIL_FROM) return false;
   try {
     const row = await env.DB.prepare("SELECT value FROM site_settings WHERE key = 'email_enabled'").first();
     return (row?.value ?? '1') !== '0';
@@ -168,12 +185,12 @@ export async function sendEmail(env, { to, subject, html }) {
     console.warn('[email] disabled or no binding — skipping email to', to, '|', subject);
     return;
   }
-  const from = env.SITE_EMAIL_FROM || 'noreply@example.com';
+  const from = env.SITE_EMAIL_FROM;
   try {
     await env.EMAIL.send({
-      from,
+      from: stripHeaderBreaks(from),
       to: Array.isArray(to) ? to[0] : to,
-      subject,
+      subject: stripHeaderBreaks(subject),
       html,
       text: htmlToText(html),
     });
@@ -192,7 +209,7 @@ export async function sendTemplatedEmail(env, key, to, vars = {}) {
     const row = await env.DB.prepare('SELECT subject, body FROM email_templates WHERE key = ?')
       .bind(key).first().catch(() => null);
 
-    const subject = renderTemplate(row?.subject ?? defaults.subject, vars);
+    const subject = renderTemplate(row?.subject ?? defaults.subject, vars, { html: false });
     const body    = renderTemplate(row?.body    ?? defaults.body,    vars);
 
     await sendEmail(env, { to, subject, html: body });

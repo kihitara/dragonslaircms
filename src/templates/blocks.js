@@ -5,7 +5,7 @@
 // Escaping contract: every plain-text/URL prop goes through escapeHtml/escapeAttr.
 // Rich-text props (authored in the admin by trusted CMS users) are output raw.
 
-import { escapeHtml, escapeAttr, formatDate } from './base.js';
+import { escapeHtml, escapeAttr, formatDate, safeUrl } from './base.js';
 import { articlePath } from '../community.js';
 
 // ── Named icons (themeable — stroke follows the card colour) ────────────────
@@ -59,7 +59,7 @@ function ctaButtons(ctas, centered = false) {
   const list = (Array.isArray(ctas) ? ctas : []).filter((c) => c && (c.label || c.href));
   if (!list.length) return '';
   const btns = list.map((c) =>
-    `<a class="btn${c.style === 'secondary' ? ' btn-secondary' : ''}" href="${escapeAttr(c.href || '#')}">${escapeHtml(c.label || '')}</a>`
+    `<a class="btn${c.style === 'secondary' ? ' btn-secondary' : ''}" href="${escapeAttr(safeUrl(c.href) || '#')}">${escapeHtml(c.label || '')}</a>`
   ).join('');
   return `<div class="cta-row${centered ? ' center' : ''}">${btns}</div>`;
 }
@@ -138,7 +138,7 @@ const RENDERERS = {
     const size = ['small', 'medium', 'large'].includes(p.logoSize) ? p.logoSize : 'small';
     const logos = (Array.isArray(p.logos) ? p.logos : []).filter((l) => l && l.src).map((l) => {
       const img = `<img src="${escapeAttr(l.src)}" alt="${escapeAttr(l.alt || '')}" loading="lazy">`;
-      return l.href ? `<a href="${escapeAttr(l.href)}">${img}</a>` : img;
+      return l.href ? `<a href="${escapeAttr(safeUrl(l.href))}">${img}</a>` : img;
     }).join('');
     return structured('logo-strip', p, p.surface || 'muted', `<div class="logo-row logos-${size}">${logos}</div>`);
   },
@@ -233,7 +233,7 @@ const RENDERERS = {
   relatedContent(p) {
     const items = (Array.isArray(p.items) ? p.items : []).map((it) => `
       <li class="card related-card">
-        <h3><a href="${escapeAttr(it.href || '#')}">${escapeHtml(it.title || '')}</a></h3>
+        <h3><a href="${escapeAttr(safeUrl(it.href) || '#')}">${escapeHtml(it.title || '')}</a></h3>
         ${rich(it.blurb, 'muted related-blurb')}
         <span class="related-more" aria-hidden="true">Read more →</span>
       </li>`).join('');
@@ -256,7 +256,7 @@ const RENDERERS = {
           ${job.department ? `<span class="vacancy-dept">${escapeHtml(job.department)}</span>` : ''}
           ${job.date ? `<time datetime="${escapeAttr(job.date)}">${escapeHtml(formatDate(job.date))}</time>` : ''}
         </div>
-        <h3><a href="${escapeAttr(job.href || '#')}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.title || '')}</a></h3>
+        <h3><a href="${escapeAttr(safeUrl(job.href) || '#')}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.title || '')}</a></h3>
         ${meta ? `<p class="muted small">${escapeHtml(meta)}</p>` : ''}
         ${job.closing_date ? `<p class="muted small vacancy-close">Applications close <time datetime="${escapeAttr(job.closing_date)}">${escapeHtml(formatDate(job.closing_date))}</time></p>` : ''}
       </article>`;
@@ -293,7 +293,7 @@ const RENDERERS = {
         ? `<div role="group" aria-label="${escapeAttr(label)}">${p.embedCode}</div>`
         : `<div role="group" aria-label="${escapeAttr(label)}" class="embed-fixed embed-${height}">${p.embedCode}</div>`;
     } else if (p.fileUrl) {
-      content = `<iframe src="${escapeAttr(p.fileUrl)}" title="${escapeAttr(label)}" loading="lazy" class="embed-frame ${height === 'auto' ? 'embed-page' : `embed-${height}`}"></iframe>`;
+      content = `<iframe src="${escapeAttr(safeUrl(p.fileUrl))}" title="${escapeAttr(label)}" loading="lazy" class="embed-frame ${height === 'auto' ? 'embed-page' : `embed-${height}`}"></iframe>`;
     }
     const hasAside = !!p.aside;
     const asideLeft = p.asidePosition !== 'right';
@@ -320,8 +320,8 @@ const RENDERERS = {
         ? `<img class="gal-thumb" src="${escapeAttr(thumb)}" alt="${escapeAttr(alt)}" loading="lazy">`
         : '<span class="gal-thumb gal-thumb-empty" aria-hidden="true"></span>';
       const caption = it.caption ? `<div class="gal-cap" hidden>${it.caption}</div>` : '';
-      return `<a class="gal-item" href="${escapeAttr(file || thumb)}" data-gal-item data-media="${video ? 'video' : 'image'}"
-          data-src="${escapeAttr(file)}" data-cover="${escapeAttr(cover)}" data-alt="${escapeAttr(alt)}"
+      return `<a class="gal-item" href="${escapeAttr(safeUrl(file || thumb))}" data-gal-item data-media="${video ? 'video' : 'image'}"
+          data-src="${escapeAttr(safeUrl(file))}" data-cover="${escapeAttr(safeUrl(cover))}" data-alt="${escapeAttr(alt)}"
           aria-label="${escapeAttr(alt || (video ? 'Play video' : 'View image'))}">
         ${thumbHtml}${video ? '<span class="gal-play" aria-hidden="true">▶</span>' : ''}${caption}
       </a>`;
@@ -450,7 +450,7 @@ const RENDERERS = {
       if (!links.length && pe.linkedin_url) links = [{ type: 'linkedin', url: pe.linkedin_url }];
       if (!links.length) return '';
       const a = links.map((l) =>
-        `<a class="team-social" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(socialLabel(l))}</a>`
+        `<a class="team-social" href="${escapeAttr(safeUrl(l.url))}" target="_blank" rel="noopener">${escapeHtml(socialLabel(l))}</a>`
       ).join('');
       return `<div class="team-links">${a}</div>`;
     };

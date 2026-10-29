@@ -72,6 +72,69 @@ export const defaultTokens = {
 };
 
 // { color: { brand: '#…' } } -> { 'color-brand': '#…' } (skips color-dark).
+// --- What a token value may be ---------------------------------------------
+// Theme values are written into CSS: /theme.css for every visitor, and an
+// inline <style> on the palette page. A value is never escaped into CSS; it is
+// checked against a strict pattern for its kind, on save and again whenever CSS
+// is generated, so a value stored before these checks can't break out either.
+// None of the patterns allow ; { } < > \ @ or url(.
+
+const TOKEN_KEY = /^[a-z0-9_-]+$/i;
+const COLOR_VALUE = [
+  /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i,
+  /^(?:rgba?|hsla?)\([0-9.,%\s/deg+-]{1,60}\)$/i,
+  /^[a-z]{3,30}$/i, // named colours, transparent, currentColor
+  /^var\(--[a-z0-9-]{1,60}\)$/i,
+];
+// One family: a quoted name, or bare words. A stack is families and commas.
+const FONT_FAMILY = `(?:'[A-Za-z0-9 _-]{1,60}'|"[A-Za-z0-9 _-]{1,60}"|[A-Za-z0-9_-]{1,60}(?: [A-Za-z0-9_-]{1,60})*)`;
+const FONT_STACK = new RegExp(`^${FONT_FAMILY}(?:\\s*,\\s*${FONT_FAMILY}){0,15}$`);
+// Lengths: numbers with units, the four maths functions and var(--x).
+const LENGTH_CHARS = /^[0-9a-z.%+*/(), -]{1,120}$/i;
+const LENGTH_WORDS = new Set(['px', 'rem', 'em', 'vw', 'vh', 'vmin', 'vmax', 'ch', 'ex', 'clamp', 'min', 'max', 'calc', 'var']);
+const WEIGHT_VALUE = /^(?:[1-9]00|normal|bold|bolder|lighter)$/;
+
+function isLength(v) {
+  if (!LENGTH_CHARS.test(v)) return false;
+  return (v.match(/-*[a-z][a-z0-9-]*/gi) || []).every((w) => LENGTH_WORDS.has(w.toLowerCase()) || /^--[a-z0-9-]+$/i.test(w));
+}
+
+export function isValidTokenValue(group, value) {
+  const v = String(value ?? '').trim();
+  if (!v || /[\r\n]/.test(v)) return false;
+  if (group === 'color' || group === 'color-dark') return COLOR_VALUE.some((re) => re.test(v));
+  if (group === 'font') return FONT_STACK.test(v);
+  if (group === 'radius' || group === 'size') return isLength(v);
+  if (group === 'weight') return WEIGHT_VALUE.test(v);
+  return false;
+}
+
+// Only the token groups, names and values that are safe to write as CSS.
+export function cleanTokens(tokens) {
+  const out = {};
+  for (const [group, entries] of Object.entries(tokens || {})) {
+    const kept = {};
+    for (const [name, value] of Object.entries(entries || {})) {
+      if (TOKEN_KEY.test(name) && isValidTokenValue(group, value)) kept[name] = String(value).trim();
+    }
+    out[group] = kept;
+  }
+  return out;
+}
+
+// A face from Admin > Fonts: a family name, a font file in the media library,
+// a weight and a style. A variable font's face gives its weight as a range,
+// such as "100 900".
+const FACE_FAMILY = /^[A-Za-z0-9 _-]{1,60}$/;
+const FACE_WEIGHT = /^(?:normal|bold|(?:[1-9]\d{0,2}|1000)(?: (?:[1-9]\d{0,2}|1000))?)$/;
+const FACE_FILE = /^\/media\/[A-Za-z0-9._/-]{1,200}\.(?:woff2|woff|ttf|otf)$/;
+export function isValidFontFace(f) {
+  return !!f && FACE_FAMILY.test(String(f.family || ''))
+    && FACE_FILE.test(String(f.file || '')) && !String(f.file).includes('..')
+    && FACE_WEIGHT.test(String(f.weight || '400'))
+    && ['normal', 'italic'].includes(String(f.style || 'normal'));
+}
+
 export function flattenTokens(tokens) {
   const out = {};
   for (const [group, entries] of Object.entries(tokens)) {
@@ -86,7 +149,8 @@ export function flattenTokens(tokens) {
 // Emit the theme stylesheet: :root light values + dark overrides applied both
 // by explicit choice (html[data-theme="dark"]) and by OS preference when the
 // visitor hasn't chosen (html without data-theme).
-export function tokensToCss(tokens) {
+export function tokensToCss(rawTokens) {
+  const tokens = cleanTokens(rawTokens);
   const flat = flattenTokens(tokens);
   const rootLines = Object.entries(flat).map(([k, v]) => `  --${k}: ${v};`);
   const darkLines = Object.entries(tokens['color-dark'] || {}).map(([k, v]) => `  --color-${k}: ${v};`);
@@ -106,7 +170,7 @@ export function fontFacesToCss(config) {
   const FORMAT = { woff2: 'woff2', woff: 'woff', ttf: 'truetype', otf: 'opentype' };
   const faces = Array.isArray(config) ? config : (config && Array.isArray(config.faces) ? config.faces : []);
   const rules = faces
-    .filter((f) => f && f.family && f.file)
+    .filter(isValidFontFace)
     .map((f) => {
       const ext = String(f.file).split('?')[0].split('.').pop().toLowerCase();
       const fmt = FORMAT[ext];
@@ -168,12 +232,14 @@ export const defaultSurfaces = {
 // Falls back to defaultSurfaces per surface/role so a partial map still works.
 export function surfacesToCss(surfaces) {
   const s = surfaces && typeof surfaces === 'object' ? surfaces : {};
-  const keys = Array.from(new Set([...SURFACE_KEYS, ...Object.keys(s)]));
+  // Surface keys and token names go into selectors and var() names, so only
+  // plain names are used, whatever is stored.
+  const keys = Array.from(new Set([...SURFACE_KEYS, ...Object.keys(s)])).filter((k) => /^[a-z0-9-]+$/.test(k));
   const blocks = keys.map((key) => {
     const roles = s[key] || {};
     const fallback = defaultSurfaces[key] || defaultSurfaces.default;
     const decls = SURFACE_ROLES.map(([rk, cssVar]) => {
-      const tok = roles[rk] || fallback[rk];
+      const tok = TOKEN_KEY.test(roles[rk] || '') ? roles[rk] : fallback[rk];
       return tok ? `  ${cssVar}: var(--color-${tok});` : null;
     }).filter(Boolean).join('\n');
     return `.surface-${key} {\n${decls}\n}`;

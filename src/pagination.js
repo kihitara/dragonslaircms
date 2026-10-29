@@ -1,18 +1,15 @@
-// Shared list pagination: page size is a per-user preference (users.page_size)
-// changed via ?ps= and remembered; page number travels in ?page=.
+// Shared list pagination: page size is a per-user preference (users.page_size);
+// ?ps= overrides it for the current view, and page number travels in ?page=.
+// A GET never writes, so ?ps= is not saved: the pagination links carry it
+// along instead.
 
 export const PAGE_SIZES = [20, 50, 100];
 
-// Resolve the effective page size for this request. A valid ?ps= is persisted
-// as the user's preference; otherwise the stored preference (default 20) wins.
+// Resolve the effective page size for this request: a valid ?ps= wins, then
+// the stored preference, then the default of 20.
 export async function getPageSize(DB, user, url) {
   const requested = Number(url.searchParams.get('ps'));
-  if (PAGE_SIZES.includes(requested)) {
-    try {
-      await DB.prepare('UPDATE users SET page_size = ? WHERE id = ?').bind(requested, user.id).run();
-    } catch { /* unmigrated column → session-only preference */ }
-    return requested;
-  }
+  if (PAGE_SIZES.includes(requested)) return requested;
   try {
     const row = await DB.prepare('SELECT page_size FROM users WHERE id = ?').bind(user.id).first();
     if (row && PAGE_SIZES.includes(row.page_size)) return row.page_size;

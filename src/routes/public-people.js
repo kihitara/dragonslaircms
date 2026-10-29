@@ -10,7 +10,7 @@
 // label? }); an empty list falls back to the legacy linkedin_url column.
 
 import { loadChrome } from '../site.js';
-import { sitePage, escapeHtml, escapeAttr, formatDate, html } from '../templates/base.js';
+import { sitePage, escapeHtml, escapeAttr, formatDate, html, safeUrl } from '../templates/base.js';
 import { articlePath } from '../community.js';
 
 const SOCIAL_LABELS = {
@@ -42,7 +42,7 @@ function socialLinksHtml(person, { small = false } = {}) {
   const links = socialLinks(person);
   if (!links.length) return '';
   const items = links.map((l) =>
-    `<a class="${small ? 'person-link' : 'btn btn-secondary btn-small'}" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}${small ? '' : ' ↗'}</a>`);
+    `<a class="${small ? 'person-link' : 'btn btn-secondary btn-small'}" href="${escapeAttr(safeUrl(l.url))}" target="_blank" rel="noopener">${escapeHtml(l.label)}${small ? '' : ' ↗'}</a>`);
   return `<div class="person-links${small ? ' person-links-small' : ''}">${items.join('')}</div>`;
 }
 

@@ -71,7 +71,6 @@ export const defaultTokens = {
   },
 };
 
-// { color: { brand: '#…' } } -> { 'color-brand': '#…' } (skips color-dark).
 // --- What a token value may be ---------------------------------------------
 // Theme values are written into CSS: /theme.css for every visitor, and an
 // inline <style> on the palette page. A value is never escaped into CSS; it is
@@ -135,6 +134,7 @@ export function isValidFontFace(f) {
     && ['normal', 'italic'].includes(String(f.style || 'normal'));
 }
 
+// { color: { brand: '#…' } } -> { 'color-brand': '#…' } (skips color-dark).
 export function flattenTokens(tokens) {
   const out = {};
   for (const [group, entries] of Object.entries(tokens)) {

@@ -4,7 +4,7 @@
 import {
   getSession, createSession, destroySession, clearSessionCookie,
   verifyPassword, hashPassword, clientIp, isLockedOut, recordLoginFailure, clearLoginFailures,
-  generateResetToken, burnTime, passwordError, destroyUserSessionsStmt,
+  generateResetToken, burnTime, passwordError, destroyUserSessionsStmt, roleAtLeast,
 } from '../auth.js';
 import { getUserByEmail, touchLastLogin, getDashboardStats, logActivity, getBranding } from '../db.js';
 import { getPageSize, currentPage, paginationControls } from '../pagination.js';
@@ -295,8 +295,9 @@ async function dashboard(env, user, url) {
       ${stat(stats.people, 'People', '/admin/people')}
       ${stat(stats.pendingComments, 'Comments awaiting review', '/admin/comments')}
       ${stat(stats.openCorrections, 'Open corrections', '/admin/corrections')}
+      ${roleAtLeast(user, 'admin') ? `
       ${stat(stats.pendingReaders, 'Readers awaiting approval', '/admin/readers')}
-      ${stat(stats.readers, 'Approved readers', '/admin/readers')}
+      ${stat(stats.readers, 'Approved readers', '/admin/readers')}` : ''}
     </div>
     <h2>Recent activity</h2>
     ${activityHtml}

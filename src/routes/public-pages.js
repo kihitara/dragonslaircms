@@ -6,6 +6,7 @@ import { sitePage, html, escapeHtml, formatDate } from '../templates/base.js';
 import { loadChrome } from '../site.js';
 import { renderBlocks } from '../templates/blocks.js';
 import { renderPageCorrections } from '../community.js';
+import { publicOrigin } from '../site-url.js';
 
 // Render a page's blocks to HTML, with `extra` (corrections, dates — or '')
 // appended inside the flow. Shared with the admin preview so a preview renders
@@ -59,7 +60,7 @@ export async function handlePublicPage(request, env, url) {
 
   const isHome = slug === 'home';
   const title = live.meta_title || (isHome ? '' : live.title);
-  const canonical = url.origin + (isHome ? '/' : '/' + slug);
+  const canonical = publicOrigin(env, url) + (isHome ? '/' : '/' + slug);
 
   return html(sitePage({
     env,

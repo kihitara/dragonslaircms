@@ -93,8 +93,9 @@ async function resolveEnv(env) {
   // the host a request arrived on: links in email are built from it, and a link
   // assembled from whatever host answered is a link that can be aimed somewhere
   // else. A stored value that fails the rule counts as unset. With no site URL,
-  // email stays off (emailEnabled) and public pages fall back to the request's
-  // origin themselves where they need an absolute address (discovery, export).
+  // email stays off (emailEnabled), and public pages' own absolute links
+  // (canonicals, feed, sitemap, export) fall back to the request's origin
+  // through publicOrigin() in site-url.js.
   const candidate = normaliseSiteUrl((s.site_url || '').trim() || env.SITE_URL || '');
   const siteUrl = siteUrlError(candidate) ? '' : candidate;
   const emailFrom = (s.email_from || '').trim() || env.SITE_EMAIL_FROM;

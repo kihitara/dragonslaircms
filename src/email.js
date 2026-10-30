@@ -222,11 +222,17 @@ export async function sendTemplatedEmail(env, key, to, vars = {}) {
 // to a whitelist because it is interpolated into SQL as a column name.
 const ADMIN_NOTIFY_FLAGS = new Set(['notify_new_registration', 'notify_new_comment', 'notify_new_correction']);
 
+// New reader registrations go to admins only, because only admins can open
+// the Readers tab the email links to. Comment and correction notices go to
+// every role, since editors moderate those.
+const ADMIN_ONLY_FLAGS = new Set(['notify_new_registration']);
+
 export async function notifyAdmins(env, flag, templateKey, vars = {}) {
   if (!ADMIN_NOTIFY_FLAGS.has(flag)) { console.warn('[email] Unknown admin notify flag:', flag); return; }
   try {
+    const roleClause = ADMIN_ONLY_FLAGS.has(flag) ? " AND role = 'admin'" : '';
     const { results } = await env.DB.prepare(
-      `SELECT email FROM users WHERE active = 1 AND ${flag} = 1 AND email IS NOT NULL`
+      `SELECT email FROM users WHERE active = 1 AND ${flag} = 1 AND email IS NOT NULL${roleClause}`
     ).all();
     for (const row of results || []) {
       await sendTemplatedEmail(env, templateKey, row.email, vars);

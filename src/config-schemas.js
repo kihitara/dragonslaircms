@@ -42,7 +42,7 @@ export const FONTS_SCHEMA = {
   fields: [
     { key: 'faces', label: 'Font faces (@font-face rules in /theme.css)', itemLabel: 'font face', type: 'list', itemFields: [
       { key: 'family', label: 'Family name — must match the family used in Branding fonts (e.g. MyDisplayFont)', type: 'text' },
-      { key: 'file', label: 'Font file URL (/media/fonts/… from an upload, or any URL; .woff2 recommended, .woff/.ttf/.otf also work)', type: 'text' },
+      { key: 'file', label: 'Font file (/media/fonts/… from an upload above; .woff2 recommended, .woff/.ttf/.otf also work)', type: 'text' },
       { key: 'weight', label: 'Weight (400 = normal, 700 = bold; or a range like "100 900" for a variable font)', type: 'text' },
       { key: 'style', label: 'Style', type: 'select', options: [
         { value: 'normal', label: 'Normal' },

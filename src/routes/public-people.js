@@ -12,6 +12,7 @@
 import { loadChrome } from '../site.js';
 import { sitePage, escapeHtml, escapeAttr, formatDate, html, safeUrl } from '../templates/base.js';
 import { articlePath } from '../community.js';
+import { publicOrigin } from '../site-url.js';
 
 const SOCIAL_LABELS = {
   website: 'Website', linkedin: 'LinkedIn', facebook: 'Facebook',
@@ -118,7 +119,7 @@ async function indexPage(request, env, url) {
     </section>`;
 
   return html(sitePage({
-    env, title: 'People', canonical: url.origin + '/people',
+    env, title: 'People', canonical: publicOrigin(env, url) + '/people',
     nav: navItems, footer, siteSettings: settings, reader, content, extraHead: PEOPLE_STYLES,
   }));
 }
@@ -185,7 +186,7 @@ async function profilePage(request, env, url, person) {
   return html(sitePage({
     env, title: person.name,
     description: person.blurb || person.role || undefined,
-    canonical: url.origin + '/people/' + person.slug,
+    canonical: publicOrigin(env, url) + '/people/' + person.slug,
     shareImage: person.photo_url ? new URL(person.photo_url, url.origin).href : undefined,
     nav: navItems, footer, siteSettings: settings, reader, content, extraHead: PEOPLE_STYLES,
   }));

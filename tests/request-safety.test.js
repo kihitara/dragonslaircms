@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crossSiteRequest, withSecurityHeaders } from '../src/csp.js';
-import { siteUrlError, normaliseSiteUrl } from '../src/site-url.js';
+import { siteUrlError, normaliseSiteUrl, publicOrigin } from '../src/site-url.js';
 
 const url = new URL('https://example.com/admin/pages/1');
 const req = (method, origin) => new Request(url, { method, headers: origin === undefined ? {} : { Origin: origin } });
@@ -40,4 +40,10 @@ test('the site URL rule', () => {
     assert.notEqual(siteUrlError(bad), null, bad);
   }
   assert.equal(normaliseSiteUrl('  https://example.com/// '), 'https://example.com');
+});
+
+test("a public page's own links use the site URL, or else the request's origin", () => {
+  const req = new URL('https://preview.example.net/posts/x');
+  assert.equal(publicOrigin({ SITE_URL: 'https://example.com' }, req), 'https://example.com');
+  assert.equal(publicOrigin({ SITE_URL: '' }, req), 'https://preview.example.net');
 });

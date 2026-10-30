@@ -12,6 +12,7 @@ import { loadChrome } from '../site.js';
 import { getSiteSettings } from '../db.js';
 import { renderArticleCommunity } from '../community.js';
 import { GALLERY_SCRIPT } from '../templates/blocks.js';
+import { publicOrigin } from '../site-url.js';
 
 // Article bodies can embed a gallery (WYSIWYG). When present, the article page
 // pulls in the shared gallery styles (head) plus the lightbox/carousel island,
@@ -258,7 +259,7 @@ async function allPostsPage(request, env, url) {
 
   return renderListing(request, env, url, {
     rows: results, total, page, heading: 'Posts',
-    basePath: '/posts', canonical: `${env.SITE_URL}/posts`,
+    basePath: '/posts', canonical: `${publicOrigin(env, url)}/posts`,
   });
 }
 
@@ -301,7 +302,7 @@ async function homeFeedPage(request, env, url) {
     // Empty title → sitePage renders just the site name (no SEO-template wrap),
     // the same as the static home page.
     env, title: '', description: settings.org_tagline || settings.seo_description || '',
-    canonical: `${env.SITE_URL}/`,
+    canonical: `${publicOrigin(env, url)}/`,
     nav: navItems, footer, siteSettings: settings, reader, content,
   }));
 }
@@ -369,7 +370,7 @@ async function categoryPage(request, env, url, slug) {
     rows: results, total, page, heading: cat.title,
     introHtml: cat.description ? `<div class="prose" style="margin-bottom:1.6rem">${cat.description}</div>` : '',
     description: stripTags(cat.description),
-    basePath: `/category/${escapeAttr(slug)}`, canonical: `${env.SITE_URL}/category/${cat.slug}`,
+    basePath: `/category/${escapeAttr(slug)}`, canonical: `${publicOrigin(env, url)}/category/${cat.slug}`,
   });
 }
 
@@ -407,7 +408,7 @@ async function seriesIndexPage(request, env, url) {
     </article>`);
   const content = cardsSection('Series', '', cards, '');
   return html(sitePage({
-    env, title: 'Series', canonical: `${env.SITE_URL}/series`,
+    env, title: 'Series', canonical: `${publicOrigin(env, url)}/series`,
     nav: navItems, footer, siteSettings: settings, reader, content,
   }));
 }
@@ -430,7 +431,7 @@ async function seriesPage(request, env, url, slug) {
   const content = cardsSection(s.title, intro, views.map((v) => card(v, lookups)), '');
   return html(sitePage({
     env, title: s.title, description: stripTags(s.description),
-    canonical: `${env.SITE_URL}/series/${s.slug}`,
+    canonical: `${publicOrigin(env, url)}/series/${s.slug}`,
     nav: navItems, footer, siteSettings: settings, reader, content,
   }));
 }
@@ -554,7 +555,7 @@ async function articlePage(request, env, url, slug) {
     title: view.meta_title || view.title,
     description: view.meta_description || view.subheading || '',
     shareImage: view.share_image || view.cover || '',
-    canonical: `${env.SITE_URL}/posts/${view.slug}`,
+    canonical: `${publicOrigin(env, url)}/posts/${view.slug}`,
     nav: navItems, footer, siteSettings: settings, reader, content,
     extraHead: articleExtraHead(view.content),
   }));
@@ -596,7 +597,7 @@ async function tagPage(request, env, url, slug) {
 
   return html(sitePage({
     env, title: tag.title, description: stripTags(tag.description),
-    canonical: `${env.SITE_URL}/tags/${tag.slug}`,
+    canonical: `${publicOrigin(env, url)}/tags/${tag.slug}`,
     nav: navItems, footer, siteSettings: settings, reader, content,
   }));
 }

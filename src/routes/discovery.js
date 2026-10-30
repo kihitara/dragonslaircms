@@ -7,6 +7,7 @@
 import { listPublishedArticles, loadLookups } from './public-articles.js';
 import { articlePath } from '../community.js';
 import { getSiteSettings } from '../db.js';
+import { publicOrigin } from '../site-url.js';
 
 const FEED_ITEMS = 20;
 
@@ -21,7 +22,7 @@ export async function handleDiscovery(request, env, url) {
 
 // The site's absolute origin for building links: the configured SITE_URL, or the
 // request origin as a fallback (no trailing slash).
-const originOf = (env, url) => (env.SITE_URL || url.origin).replace(/\/+$/, '');
+const originOf = publicOrigin;
 
 // XML text escaping (feeds/sitemaps are XML, not HTML).
 function xml(s) {

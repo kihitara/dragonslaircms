@@ -331,12 +331,12 @@ export function adminResetPage({ token = '', error = '', invalid = false, brandi
       <input type="hidden" name="token" value="${escapeAttr(token)}">
       <div class="field">
         <label for="password">New password</label>
-        <input type="password" id="password" name="password" required minlength="12" autofocus autocomplete="new-password">
+        <input type="password" id="password" name="password" required minlength="12" maxlength="256" autofocus autocomplete="new-password">
         <p class="hint">At least 12 characters.</p>
       </div>
       <div class="field">
         <label for="confirm">Confirm new password</label>
-        <input type="password" id="confirm" name="confirm" required minlength="12" autocomplete="new-password">
+        <input type="password" id="confirm" name="confirm" required minlength="12" maxlength="256" autocomplete="new-password">
       </div>
       <button class="btn" type="submit" style="width:100%;justify-content:center">Set new password</button>
     </form>`, branding);
@@ -359,7 +359,7 @@ export function adminSetupPage({ error = '', name = '', email = '', branding = {
       </div>
       <div class="field">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="12" autocomplete="new-password">
+        <input type="password" id="password" name="password" required minlength="12" maxlength="256" autocomplete="new-password">
         <p class="hint">At least 12 characters.</p>
       </div>
       <button class="btn" type="submit" style="width:100%;justify-content:center">Create admin account</button>

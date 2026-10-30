@@ -12,6 +12,7 @@ import { renderBlocks } from '../templates/blocks.js';
 import { formatDate, escapeAttr } from '../templates/base.js';
 import { pageToMarkdown, articleToMarkdown, exportFilename } from '../export-md.js';
 import { buildExportHtml } from '../export-html.js';
+import { publicOrigin } from '../site-url.js';
 
 // Opens what the stripped scripts would have opened, waits for webfonts so the
 // PDF isn't printed with fallback faces, then prints. Works both in the hidden
@@ -59,7 +60,7 @@ const printResponse = (doc) => new Response(doc, {
   },
 });
 
-const baseUrl = (env, url) => (env.SITE_URL || url.origin).replace(/\/+$/, '');
+const baseUrl = publicOrigin;
 
 const dateMeta = (row) => [
   formatDate(row.publish_date || row.created_at) ? `Published ${formatDate(row.publish_date || row.created_at)}` : '',

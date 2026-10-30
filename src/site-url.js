@@ -21,6 +21,13 @@ export function siteUrlError(value) {
   return 'The site URL has to start https:// (plain http is only for this computer, under wrangler dev).';
 }
 
+// The origin for a public page's own absolute links (canonical tags, the feed,
+// the sitemap, export bases): the configured site URL, or else the origin the
+// request arrived on. Never used for email, which needs the site URL itself.
+export function publicOrigin(env, url) {
+  return (env.SITE_URL || url.origin).replace(/\/+$/, '');
+}
+
 // A typed value tidied the way people expect: surrounding spaces and any
 // trailing slashes go before it is checked.
 export function normaliseSiteUrl(value) {

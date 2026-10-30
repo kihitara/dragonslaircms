@@ -9,6 +9,7 @@
 import { sitePage, escapeHtml, escapeAttr, formatDate, html } from '../templates/base.js';
 import { loadChrome } from '../site.js';
 import { listPublishedArticles } from './public-articles.js';
+import { publicOrigin } from '../site-url.js';
 
 const PER_PAGE = 10;
 
@@ -44,7 +45,7 @@ export async function handleSearch(request, env, url) {
 
   return html(sitePage({
     env, title: q ? `Search: ${q}` : 'Search',
-    canonical: `${env.SITE_URL}/search`,
+    canonical: `${publicOrigin(env, url)}/search`,
     nav: navItems, footer, siteSettings: settings, reader, content,
     extraHead: '<meta name="robots" content="noindex">',
   }));

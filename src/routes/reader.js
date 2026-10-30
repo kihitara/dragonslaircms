@@ -365,7 +365,7 @@ async function login(request, env, url) {
   if (reader.status === 'pending') {
     return bad(reader.email_verified
       ? 'Your account is awaiting approval by the site team.'
-      : 'Please verify your email first — check your inbox for the verification link.', 403);
+      : 'Please confirm your email address first: check your inbox for the confirmation link.', 403);
   }
   if (reader.status === 'rejected') {
     return bad('Your account registration was not approved. Contact the site owner if you think this is a mistake.', 403);
